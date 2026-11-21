@@ -22,7 +22,7 @@ import os
 import time
 from typing import Optional
 
-from las.modules.providers.base import (
+from las.shared.provider_contract import (
     Adapter, CapabilityRecord, ChatRequest, Message, ProviderError, SimulatedCrash,
     StreamEvent, ToolCall, Usage,
 )
