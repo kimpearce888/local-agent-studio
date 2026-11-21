@@ -19,6 +19,7 @@
 | storage | host | SQLite WAL store: hash-chained event log, providers/plans/templates/settings, run dirs | `las.store` (`Store`) | `studio.db`, `runs/` tree, `backups/` | shared | none | `las/store.py` → `las/modules/storage/` | `python -m unittest tests.test_store_events` |
 | reporting | host | Markdown/JSON export with provenance and AI notice | `las.export` (`export_run`, `ExportOptions`) | `runs/<id>/export/*` | shared, storage | none | `las/modules/reporting/` (implemented) | `python -m unittest tests.test_cli` (export paths) |
 | selftest | host | Built-in three-task self-test with hard caps | `las.selftest` (`run_selftest`) | none | shared, execution | providers.mock | `las/modules/selftest/` (implemented) | `python -m unittest tests.test_cli` (selftest paths) |
+| api | host | Loopback engine HTTP API: token auth, origin check, runs/events/controls (spec 7.5) | `las.modules.api` (`serve`, `serve()`) | none | shared, execution, planning, providers, storage | reporting (export endpoint) | `las/modules/api/` (implemented) | `python -m unittest tests.test_api` |
 | app | root | Host: composition root, module registry, capability resolution, CLI adapter | `las.cli` → `las.app` | none | all module contracts | none | `las/app/` (implemented) | `python -m unittest tests.test_cli` |
 
 ## Rules

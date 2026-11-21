@@ -69,7 +69,10 @@ class Store:
         os.makedirs(os.path.join(self.data_dir, "runs"), exist_ok=True)
         os.makedirs(os.path.join(self.data_dir, "backups"), exist_ok=True)
         self.db_path = os.path.join(self.data_dir, "studio.db")
-        self.db = sqlite3.connect(self.db_path)
+        # check_same_thread=False: the loopback API server and run
+        # coordinator call the store from their own threads; WAL mode
+        # serializes writers safely.
+        self.db = sqlite3.connect(self.db_path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")

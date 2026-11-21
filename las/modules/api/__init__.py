@@ -22,7 +22,7 @@ from las.modules.execution import DriverConfig, Engine
 from las.modules.planning import Planner
 from las.modules.providers import build_adapter, probe as probe_adapter
 from las.modules.storage import Store
-from las.shared.cli_contract import EXIT_OK
+EXIT_OK = 0
 from las.shared.messages import message_with_fix
 from las.shared.plan_contract import Plan
 from las.shared.provider_contract import ProviderProfile
@@ -141,7 +141,8 @@ def make_handler(data_dir: str, token: str):
             try:
                 if not self._check_security():
                     return
-                self._dispatch(method, *urlparse(self.path))
+                u = urlparse(self.path)
+                self._dispatch(method, u.path, u.query)
             except ApiError as exc:
                 self._send(exc.status, _error_body(exc))
             except Exception as exc:  # noqa: BLE001
@@ -300,7 +301,12 @@ def make_handler(data_dir: str, token: str):
                 fmt = q.get("format", "markdown")
                 if fmt not in ("markdown", "json"):
                     raise ApiError(422, "BAD-REQUEST", "format must be markdown or json.")
-                from las.modules.reporting import export_run
+                try:
+                    from las.modules.reporting import export_run
+                except ImportError:
+                    raise ApiError(409, "MODULE-UNAVAILABLE",
+                                   "The reporting module is not available.",
+                                   "studio modules list shows installed modules.")
                 result = export_run(state, store, fmt=fmt)
                 return self._send(200, {"content": result.content,
                                         "size_bytes": result.size_bytes})

@@ -108,6 +108,82 @@ PASSED / FAILED / BLOCKED / SKIPPED / NOT RUN — never inflated.
   `providers.mock`, `selftest` (working tree untouched); `python3 -m las
   selftest` against the mock — PASSED end to end.
 
+## S5 — God-module split (scheduler done; CLI split evaluated and deferred)
+
+- S5a (committed 963d393): the 851-line scheduler became cohesive private
+  files inside the execution module — attempt.py (334: one attempt, tools,
+  caps, loops, handoff validation), driver.py (363: lifecycle and task
+  loop), gates.py, controls.py, budgets.py, engine.py — with the facade and
+  public API unchanged. Injection seams added (DriverConfig.workspace_factory
+  / broker_factory) for replacement testing (fixes F-07's engine half and
+  F-10).
+- S5b (deferred, decision recorded): moving the CLI command handlers into
+  module-owned cli.py files was implemented, evaluated and rolled back —
+  the handler/helper coupling (capability gates, provider-registry helper)
+  requires a context-object redesign that risks user-facing regressions
+  disproportionate to the remaining benefit. The host CLI stays the
+  composition root; documented as a size-fitness exception in
+  tests/test_architecture.py with the M2 milestone as the review point.
+- Verification: 221 tests PASSED, all three removal tests PASSED,
+  `python -m las selftest` PASSED.
+
+## S6 — CI and push (committed 39fde07)
+
+- .github/workflows/ci.yml: Python 3.10/3.11/3.12 matrix running the full
+  suite (architecture + registry checks included), the three disposable
+  removal tests, and a packaging smoke test (pip wheel + install +
+  studio --version).
+- R9 size fitness added to the architecture checker (450-line limit for
+  module files; one documented exception: the host cli).
+- Pushed to GitHub (main, 39fde07 and later). CI outcome NOT VERIFIED from
+  this sandbox (the gh CLI is unavailable); the identical commands were run
+  locally and passed.
+
+## S7 — Shim removal: NOT DONE (remaining work)
+
+Legacy re-export shims (declared per manifest in compat_shims) and legacy
+test imports are still in place by design of the transition; removing them
+is mechanical follow-up work (delete shims, rewrite test imports with the
+S4 mapping, empty the manifests' compat_shims, update DEPENDENCY_RULES).
+The architecture checker already enforces that no NEW legacy imports can
+appear in the canonical zone.
+
+## M1 — Loopback engine HTTP API (spec 7.5)
+
+- New `api` module: 127.0.0.1-only server, per-launch token written to
+  <data_dir>/api-token with mode 0600, Origin/Host checking (403), 401 on
+  bad token; endpoints for health, providers (CRUD, probe, models), plans
+  (generate/read/save), runs (start on a background thread — one at a
+  time, RUN-2), events with ?after=seq polling, run controls, task
+  controls, gate decisions, handoff editing, export, templates. Errors use
+  the spec's {"error": {code, message, fix}} shape.
+- `studio serve` command, registered through the module registry; the
+  api module declares reporting as an optional dependency (the export
+  endpoint degrades with an actionable 409 when reporting is absent).
+- Storage: sqlite3 connections now allow the API/coordinator threads
+  (check_same_thread=False, WAL serializes writers).
+- Defects found and fixed during verification: URL routing spread
+  urlparse fields into the wrong parameters (all routes 404); SQLite
+  cross-thread use; one broken intermediate commit was pushed and then
+  repaired (see git history).
+- Verification: full suite PASSED (230 tests) including 9 API tests
+  (auth, origin, CRUD, end-to-end run against the mock with events and
+  export, polling). Removal tests: reporting/providers.mock/selftest all
+  PASSED after the api module landed (api holds no shim baggage).
+
+## Remaining work (honest list)
+
+- S7 shim removal + canonical test imports (mechanical).
+- S5b CLI command split (context-object redesign).
+- M1 items not feasible in this sandbox: nightly contract tests against
+  real servers (no LM Studio/Ollama available); the 100-goal benchmark
+  (needs a real model); derived SQL tables optimization.
+- M2 desktop shell: BLOCKED in this environment (no Rust toolchain); the
+  engine API it will consume is in place and tested.
+- M3/M4 features (MCP client, attachments, signed installers, OTLP export,
+  run comparison, replanning UI) — not started; P1 tools run_command and
+  web_fetch already exist with allowlists from M0.
+
 ## Handover notes (maintained continuously)
 
 - To run everything: `python3 -m unittest discover -s tests`;
