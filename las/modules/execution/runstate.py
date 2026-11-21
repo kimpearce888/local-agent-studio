@@ -72,6 +72,9 @@ class RunState:
     caps: dict = field(default_factory=dict)
     tasks: dict[str, TaskState] = field(default_factory=dict)
     events: list[Event] = field(default_factory=list)
+    # tokens spent by supporting calls (summarizer, repair) outside
+    # task attempts (mandate audit item 8)
+    support_tokens: int = 0
     paused_reason: str = ""
     failure_code: str = ""
     approved_gates: set[str] = field(default_factory=set)
@@ -105,7 +108,7 @@ class RunState:
         return self.status in ("succeeded", "failed", "cancelled")
 
     def tokens_used(self) -> int:
-        total = 0
+        total = self.support_tokens
         for st in self.tasks.values():
             u = st.usage or {}
             total += int(u.get("tokens_in", 0)) + int(u.get("tokens_out", 0))
@@ -264,6 +267,9 @@ def replay(store: Store, run_id: str, plan: Plan,
         elif ev.type == "constraint.released":
             state.constraints[str(p.get("constraint_id", ""))] = (
                 "resolved", str(p.get("task_id", "")))
+        elif ev.type == "support.usage":
+            state.support_tokens += (int(p.get("tokens_in", 0))
+                                     + int(p.get("tokens_out", 0)))
         elif ev.type == "compaction.applied":
             state.compactions.append(dict(p))
         elif ev.type == "run.paused":

@@ -91,7 +91,11 @@ class PermissionBroker:
             return BrokerDecision(False, "web-disabled", "")
         if tool == "run_command":
             head = str(args["command"][0]) if args.get("command") else ""
-            if self.command_allowlist and head not in self.command_allowlist:
+            # Fail closed: an empty allowlist must not mean unrestricted
+            # execution (mandate audit item 11).
+            if not self.command_allowlist:
+                return BrokerDecision(False, "command-allowlist-empty", "")
+            if head not in self.command_allowlist:
                 return BrokerDecision(False, "command-not-allowlisted", "")
         if tool == "web_fetch":
             domain = _url_domain(str(args.get("url", "")))

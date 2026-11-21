@@ -67,8 +67,11 @@ def cmd_run(args) -> int:
         return EXIT_INVALID
 
     engine = Engine(args.data_dir)
+    args._config = _build_config(args)   # frozen into run.created (item 18)
     run_id = engine.create_run(plan, cap_tokens=args.cap_tokens,
-                               cap_wall_minutes=args.cap_wall_minutes)
+                               cap_wall_minutes=args.cap_wall_minutes,
+                               models=_models_map(registry, provider_id, args),
+                               config=args._config)
     # PLN-7/TLS-8: the plan's attachments land in the run workspace so
     # tasks can read them with the jailed file tools.
     try:
@@ -83,29 +86,46 @@ def cmd_run(args) -> int:
     return _drive(engine, store, run_id, registry, provider_id, args)
 
 
-def _drive(engine: Engine, store: Store, run_id: str, registry: ProviderRegistry,
-           provider_id: str, args) -> int:
-    worker_model = args.worker_model or ""
-    if not worker_model:
+def _build_config(args) -> DriverConfig:
+    return DriverConfig(
+        failure_policy=getattr(args, "on_failure", None) or "ask",
+        cap_tokens_run=int(getattr(args, "cap_tokens", 0)
+                           or DEFAULTS["cap_tokens_run"]),
+        cap_wall_minutes_run=float(
+            getattr(args, "cap_wall_minutes", 0)
+            or DEFAULTS["cap_wall_minutes_run"]),
+        context_length=int(getattr(args, "context_length", 0)
+                           or DEFAULTS["context_length"]),
+        enable_shell=bool(getattr(args, "enable_shell", False)),
+        enable_web=bool(getattr(args, "enable_web", False)),
+        command_allowlist=[c for c in (getattr(args, "command_allowlist", "")
+                                       or "").split(",") if c],
+        web_domains=[d for d in (getattr(args, "web_domains", "")
+                                 or "").split(",") if d])
+
+
+def _models_map(registry: ProviderRegistry, provider_id: str, args) -> dict:
+    worker = getattr(args, "worker_model", None) or ""
+    if not worker:
         try:
             models = registry.get(provider_id).list_models()
-            worker_model = models[0]["id"] if models else ""
+            worker = models[0]["id"] if models else ""
         except (ProviderError, KeyError, IndexError):
-            worker_model = ""
-    models = {"default": (provider_id, worker_model)}
+            worker = ""
+    models = {"default": (provider_id, worker)}
     if getattr(args, "planner_model", None):
         models["planner"] = (provider_id, args.planner_model)
-    config = DriverConfig(
-        failure_policy=args.on_failure,
-        cap_tokens_run=args.cap_tokens,
-        cap_wall_minutes_run=args.cap_wall_minutes,
-        context_length=getattr(args, "context_length", 8192),
-        enable_shell=getattr(args, "enable_shell", False),
-        enable_web=getattr(args, "enable_web", False),
-        command_allowlist=(args.command_allowlist or "").split(",")
-        if getattr(args, "command_allowlist", None) else [],
-        web_domains=(args.web_domains or "").split(",")
-        if getattr(args, "web_domains", None) else [])
+    return models
+
+
+def _drive(engine: Engine, store: Store, run_id: str, registry: ProviderRegistry,
+           provider_id: str, args) -> int:
+    frozen_models = getattr(args, "_frozen_models", None)
+    if frozen_models:
+        models = frozen_models
+    else:
+        models = _models_map(registry, provider_id, args)
+    config = getattr(args, "_config", None) or _build_config(args)
     try:
         driver = engine.driver(run_id, registry, models, config)
     except Exception as exc:
@@ -249,10 +269,22 @@ def cmd_resume(args) -> int:
     if not provider_id:
         print("No provider configured.")
         return EXIT_PROVIDER
-    # Reuse the run's stored caps.
-    caps = state.caps or {}
-    args.cap_tokens = int(caps.get("tokens", 2_000_000))
-    args.cap_wall_minutes = int(caps.get("wall_minutes", 480))
+    # Restore the frozen execution configuration (item 18): caps,
+    # policies, permissions and models come from run.created; only
+    # explicitly given flags override.
+    first = store.first_event(args.run_id)
+    frozen = (first.payload.get("config") if first else None) or {}
+    frozen_models = dict((first.payload.get("models") if first else {}) or {})
+    if getattr(args, "on_failure", None):
+        frozen["failure_policy"] = args.on_failure
+    if getattr(args, "worker_model", None) and frozen_models.get("default"):
+        frozen_models["default"] = (frozen_models["default"][0],
+                                    args.worker_model)
+    if getattr(args, "planner_model", None):
+        pid = frozen_models.get("default", (provider_id, ""))[0]
+        frozen_models["planner"] = (pid, args.planner_model)
+    args._config = DriverConfig.from_public_obj(frozen) if frozen else None
+    args._frozen_models = frozen_models
     print(f"Resuming {args.run_id}")
     return _drive(engine, store, args.run_id, registry, provider_id, args)
 

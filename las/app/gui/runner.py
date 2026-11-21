@@ -80,13 +80,13 @@ class RunSession(threading.Thread):
     to the same driver (or a rebuilt one for a model change).
     """
 
-    def __init__(self, engine: Engine, run_id: str, registry, models: dict,
-                 config: DriverConfig):
+    def __init__(self, engine: Engine, run_id: str, registry,
+                 models: dict | None = None, config: DriverConfig | None = None):
         super().__init__(daemon=True)
         self.engine = engine
         self.run_id = run_id
         self.registry = registry
-        self.models = dict(models)
+        self.models = dict(models) if models else {}
         self.config = config
         self.events: queue.Queue = queue.Queue()
         self._decision: queue.Queue = queue.Queue()
@@ -132,7 +132,8 @@ class RunSession(threading.Thread):
     def run(self) -> None:                            # noqa: C901
         try:
             self._driver = self.engine.driver(
-                self.run_id, self.registry, self.models, self.config)
+                self.run_id, self.registry, self.models or None,
+                self.config)
             self._driver.open()
             self._post("started", run_id=self.run_id)
             while not self._stop.is_set():

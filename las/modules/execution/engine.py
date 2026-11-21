@@ -26,7 +26,8 @@ class Engine:
 
     def create_run(self, plan: Plan, cap_tokens: int | None = None,
                    cap_wall_minutes: int | None = None, title: str = "",
-                   models: dict | None = None) -> str:
+                   models: dict | None = None,
+                   config: "DriverConfig | None" = None) -> str:
         run_id = ("run-" + time.strftime("%Y%m%d-%H%M%S") + "-"
                   + secrets.token_hex(6))
         caps = {
@@ -42,6 +43,8 @@ class Engine:
             "caps": caps,
             "plan": plan.to_obj(),
         }
+        if config is not None:
+            payload["config"] = config.to_public_obj()
         self.store.save_plan(plan.to_obj())
         self.store.append(run_id, "run.created", payload)
         os.makedirs(self.store.workspace_dir(run_id), exist_ok=True)
@@ -227,7 +230,22 @@ class Engine:
         self.store.append(run_id, "task.edited", edited)
 
     def driver(self, run_id: str, registry: ProviderRegistry,
-               models: dict, config: DriverConfig | None = None) -> RunDriver:
-        driver = RunDriver(self.store, run_id, registry, models, config or DriverConfig())
+               models: dict | None = None,
+               config: DriverConfig | None = None) -> RunDriver:
+        """Build the run driver.
+
+        With ``models``/``config`` omitted the *original* execution
+        configuration recorded in ``run.created`` is restored - a
+        resume must not silently change model, permissions, budgets or
+        task scope (mandate audit item 18)."""
+        first = self.store.first_event(run_id)
+        payload = first.payload if first else {}
+        frozen = payload.get("config")
+        if config is None and frozen:
+            config = DriverConfig.from_public_obj(frozen)
+        if not models:
+            models = dict(payload.get("models") or {})
+        driver = RunDriver(self.store, run_id, registry, models,
+                           config or DriverConfig())
         driver.open()
         return driver

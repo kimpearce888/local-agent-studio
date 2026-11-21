@@ -313,9 +313,19 @@ class RunDriver:
                               Message("user", f"At most {max_words} words:\n{summary}")],
                     params={"max_tokens": max_words * 3})
                 text = ""
+                used_in = used_out = 0
                 for ev in adapter.chat(req):
                     if ev.kind == "text_delta":
                         text += ev.text
+                    elif ev.kind == "usage" and ev.usage is not None:
+                        used_in += int(getattr(ev.usage, "tokens_in", 0) or 0)
+                        used_out += int(getattr(ev.usage, "tokens_out", 0) or 0)
+                if used_in or used_out:
+                    # Supporting calls count against real usage and
+                    # budgets (mandate audit item 8).
+                    self.store.append(self.run_id, "support.usage", {
+                        "task_id": task.id, "kind": "summarizer",
+                        "tokens_in": used_in, "tokens_out": used_out})
                 return " ".join(text.split()[:max_words])
             except ProviderError:
                 return " ".join(summary.split()[:max_words])
@@ -330,7 +340,7 @@ class RunDriver:
             task, st.plan, handoffs, self._workspace(), self._broker(),
             context_length=int((task.params or {}).get(
                 "context_length", self.config.context_length)),
-            summarizer=summarizer, token_counter=None)
+            summarizer=summarizer, token_counter=token_counter)
         return ctx
 
     def _broker(self) -> PermissionBroker:

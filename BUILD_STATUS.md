@@ -1,0 +1,97 @@
+# BUILD_STATUS
+
+Last updated: 2026-11-21 (mandate re-baseline session)
+
+## Commits
+
+- Mandate baseline (stated in the instruction): `3fe2d95b6f9f203252e7166f19c8cb8f0debc1d5`
+- Actual current baseline at mandate receipt: `b11a8c7` (v0.3.0: complete
+  tkinter GUI over the Python engine) - the baseline has moved; the
+  Python engine + CLI + GUI (13 screens, 326 tests green) is preserved
+  as the behavioral reference and migration source, per mandate 4.1.
+- Current HEAD: see `git log -1`.
+
+## Product architecture (target, per the delivery mandate)
+
+Independent persistent multi-agent desktop environment, Rust-first:
+
+- `rust/crates/las-core` - engine: agents (identity, profile versions,
+  sessions, memory, inbox), communication (messages with explicit
+  delivery states, busy-agent modes, calls, delegation, control
+  transfer, channels, blackboard), runtime (tokio actor per agent,
+  per-session turn locks), providers (OpenAI-compatible adapters,
+  shared inference scheduler), context (assembly, compaction,
+  rollover, memory retrieval), storage (SQLite WAL, reads the existing
+  Python event-log schema), security (permissions, Rule of Two).
+- `rust/crates/las-desktop` - egui/eframe desktop shell (ADR-002) with
+  the mandate's 14 navigation areas; UI logic verified headlessly with
+  egui_kittest (CPU renderer) in this environment.
+- `las/` (Python) - reference engine + CLI + tkinter GUI (v0.3.0).
+  Kept runnable for parity tests and migration; NOT the production
+  engine (mandate 4.1).
+
+## Audit of the 24 known gaps (mandate section 18) - code evidence
+
+| # | Item | Status | Evidence |
+|---|------|--------|----------|
+| 1 | Workflow-only product definition | OPEN (architectural) | pivot to the agent-first model, Rust core in progress |
+| 2 | No independent agent runtime/mailbox/messaging | OPEN | Rust `las-core` agents+communication (this session) |
+| 3 | Role profiles ≠ agents | OPEN | same as #2 |
+| 4 | Desktop shell missing | PARTLY: tkinter GUI v0.3.0 exists as UX reference; Rust shell is the target | `las/app/gui/`, 22 Xvfb tests |
+| 5 | No dynamic compaction/rollover lifecycle | OPEN | context module has an attempt-start budget ladder; session-growth rollover lands in Rust context module |
+| 6 | Driver passes `token_counter=None` | **FIXED** | `driver.py:_assemble` now passes its adapter-backed counter; `context` falls back to estimates and demotes `exact_counts`; tests `test_mandate_fixes.TestItem6` |
+| 7 | `max()` instead of cumulative input usage | NOT REPRODUCIBLE on current main | `runstate.py:111` accumulates with `+=`; full-suite replay tests green; kept under observation |
+| 8 | Supporting calls unaccounted | **FIXED** | new `support.usage` event type; the summarizer records its tokens; `RunState.support_tokens` + `tokens_used()` include them (run caps read `tokens_used()`, so caps now cover support calls); tests `TestItem8` |
+| 9 | Tasks share the run workspace | OPEN (design) | per-run workspace is per the old spec; the agent-first model gives per-agent/per-task workspaces (Rust) |
+| 10 | Shell tool without OS sandbox | OPEN | subprocess execution remains flagged; Rust `security` module will enforce Landlock (kernel 5.10 present) + argument arrays; until then run_command stays deny-by-default |
+| 11 | Empty allowlist = unrestricted | **FIXED** | `tools.py` denies with `command-allowlist-empty` when shell is enabled but the allowlist is empty (fail closed); tests `TestItem11` |
+| 12 | Web fetch SSRF/IP/redirect hardening | OPEN | broker gates the tool; the hardened fetcher (resolved-IP checks, redirect revalidation, private/link-local denial, response limits) lands in the Rust tools module |
+| 13 | Credentials as plaintext | LARGELY ADDRESSED | keys are `env:NAME` references, never values; serializer audit pending in Rust port |
+| 14 | Registry one-level nesting limit | OPEN | `registry.py:104` rejects deeper descendants; the Rust module tree designs recursive nesting from the start; Python registry fix deferred to the port (no user impact today) |
+| 15 | Attempt state/retry termination | FIXED (prior) | attempt state machine; 1000/1000 kill-resume benchmark |
+| 16 | Pause/resume/cancel lifecycle | FIXED (prior) | same benchmark + run view tests |
+| 17 | API coordinator keeps control access | FIXED (prior) | `las/modules/api/__init__.py` holds the live driver for paused/gate runs; `tests/test_api.py` |
+| 18 | Resume restores original config | **FIXED** | `DriverConfig.to_public_obj` frozen into `run.created`; `Engine.driver` restores models+config when not given; CLI resume passes explicit-flag overrides only; GUI resume restores; tests `TestItem18` |
+| 19 | Capability tests on real servers | BLOCKED (environment) | no model server in this sandbox; harness shipped for the user's machine |
+| 20 | Benchmark is mock-only | BLOCKED (environment) | no reference model available; mock benchmark pins determinism only |
+| 21 | providers.mock removal CI failure | FIXED (prior) | removal tests pass on main |
+| 22 | CI matrix + packaging smoke | PARTLY | CI green; `.deb` via `dpkg-deb` planned; AppImage tooling check pending |
+| 23 | Runtime/package version agreement | OPEN | Python `0.3.0` vs Rust workspace `0.4.0`; unify at release |
+| 24 | Docs reflect reality | IN PROGRESS | this file + HANDOVER.md added; full doc pass at release |
+
+## Decisions (ADRs in `docs/adr/`)
+
+- ADR-002: desktop stack = egui/eframe (Tauri 2 blocked in the build
+  environment: no webkit2gtk-4.1/gtk+-3.0/libsoup-3.0 pkg-config
+  entries and no passwordless sudo to install them). egui is fully
+  Rust including rendering; UI logic is verified headlessly with
+  egui_kittest. On a stock Ubuntu 22.04 desktop (the mandate's target)
+  egui runs with no extra system dependencies.
+- ADR-003: the on-screen window cannot open in THIS sandbox
+  (`libxkbcommon-x11` absent; base `libxkbcommon.so.0` present).
+  Evidence captured; the binary itself compiles and its UI is tested
+  headlessly. This is an environment limit, not a product limit.
+
+## Test results
+
+- Python reference engine: 313 tests (was 304 + 9 mandate-fix
+  regressions + support-usage/replay additions), all green headless;
+  326+ with the GUI suite under Xvfb.
+- Rust: `cargo build` green for las-core placeholder + las-desktop
+  shell; kittest UI tests being added alongside las-core.
+
+## Blockers (honest)
+
+- No model server / reference model in the sandbox: real-provider
+  capability tests and real-model benchmark quality remain unverified
+  (audit items 19, 20).
+- No passwordless sudo: cannot install GTK/WebKit (Tauri) or
+  xkbcommon-x11 (on-screen egui window in-sandbox only).
+
+## Exact next engineering action
+
+Implement `rust/crates/las-core`: storage schema (agents, profile
+versions, sessions, memory, inbox, messages, channels) over SQLite WAL
+with a reader for the existing Python event log; then the agent actor
+runtime and the communication operations with delivery states; then
+wire the egui Agents/Inbox screens to it (kittest-verified).

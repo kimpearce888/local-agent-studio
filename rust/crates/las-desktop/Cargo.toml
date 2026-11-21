@@ -1,0 +1,11 @@
+[package]
+name = "las-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+las-core = { path = "../las-core" }
+eframe = "0.31"
+egui = "0.31"
+egui_kittest = "0.37.0"

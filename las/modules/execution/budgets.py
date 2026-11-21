@@ -69,6 +69,27 @@ class DriverConfig:
     # security setups supply these instead of the defaults constructed by
     # the driver.
     workspace_factory: Optional[Callable] = None   # (store, run_id) -> Workspace
+
+    def to_public_obj(self) -> dict:
+        """The frozen-execution subset recorded in run.created (audit
+        item 18: resume restores the original configuration)."""
+        return {
+            "failure_policy": self.failure_policy,
+            "cap_tokens_run": self.cap_tokens_run,
+            "cap_wall_minutes_run": self.cap_wall_minutes_run,
+            "stall_timeout": self.stall_timeout,
+            "context_length": self.context_length,
+            "enable_shell": self.enable_shell,
+            "enable_web": self.enable_web,
+            "command_allowlist": list(self.command_allowlist),
+            "web_domains": list(self.web_domains),
+        }
+
+    @classmethod
+    def from_public_obj(cls, obj: dict) -> "DriverConfig":
+        known = {k: v for k, v in (obj or {}).items()
+                 if k in cls.__dataclass_fields__}
+        return cls(**known)
     broker_factory: Optional[Callable] = None      # (workspace, config) -> PermissionBroker
 
 

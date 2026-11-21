@@ -227,10 +227,16 @@ def assemble_context(
     m = int((context_length or 0) * SAFETY_MARGIN)
     available = (context_length - r - m) if context_length else 0
 
+    exact = [token_counter is not None]   # demoted when the provider cannot
+                                          # count (mandate 9.3: labelled estimates)
+
     def total_tokens() -> int:
         if token_counter is not None:
-            return token_counter([Message("system", system + "\n\n" + block2),
-                                   Message("user", user_content)]) + _tools_tokens(tools)
+            n = token_counter([Message("system", system + "\n\n" + block2),
+                               Message("user", user_content)])
+            if n is not None:
+                return n + _tools_tokens(tools)
+            exact[0] = False
         return (estimate_tokens(system) + estimate_tokens(block2)
                 + estimate_tokens(user_content) + _tools_tokens(tools))
 
@@ -324,7 +330,7 @@ def assemble_context(
         breakdown=breakdown,
         warnings=warnings,
         compaction_steps=steps,
-        exact_counts=token_counter is not None,
+        exact_counts=exact[0],
         overflow=overflow,
         available_input=available,
     )

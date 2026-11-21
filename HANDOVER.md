@@ -1,56 +1,89 @@
-# Handover — Local Agent Studio architecture migration and M1
+# HANDOVER
 
-## Where things stand (2026-11-21)
+Last updated: 2026-11-21 (mandate re-baseline session)
 
-- Repository: github.com/kimpearce888/local-agent-studio, branch main,
-  everything committed and pushed. Full suite green (unittest discover).
-- The GAADS architecture migration S0-S7 is COMPLETE: no legacy shims,
-  canonical imports everywhere, 14 registered modules (incl. the
-  providers.mock child), all enforcement checks green.
-- The M1 loopback HTTP API is implemented and tested (`studio serve`),
-  including model lifecycle endpoints (PRV-8).
-- P0 features delivered: templates + role profiles (`studio templates`,
-  `studio roles`), diagnostics bundle (`studio diagnostics`), data
-  retention/delete (`studio data`, `studio delete`), model lifecycle
-  (`studio models`).
-- Requirements sweep complete: every PRD ID is mapped with status and
-  evidence in docs/requirements-coverage.md. This session added edit
-  pending tasks (RUN-6), the four PRD-named built-in templates (LIB-1),
-  single-run deletion (SET-2), the user documentation set (DST-3),
-  OpenAPI + completion hooks (API-2), run comparison (OBS-6), OTLP
-  telemetry (OBS-5), re-planning with pinned edits (PLN-6), attachments
-  (PLN-7/TLS-8), prompt version history (LIB-3) and the release policy
-  (DST-4).
+## What this project is now
 
-## Run everything
+The delivery mandate (`upload/Pasted Content_1795301785623.txt`,
+section 2) redefines the product: a **local-first, independent
+multi-agent desktop environment** - persistent agents with identity,
+sessions, memory, inboxes and permissions, communicating through
+durable mailboxes, sharing local model infrastructure through a fair
+scheduler, supervised from one desktop application. The previous
+product definition (goal → plan → sequential task chain, the repo
+PRD/spec) becomes a subsystem (workflows) of the new product
+(mandate section 11). The mandate takes precedence over the old PRD.
+
+The stack is Rust-first (mandate 4.1): the production engine is Rust;
+the Python engine (`las/`, v0.3.0, 313 tests green) is the behavioral
+reference and migration source, kept runnable for parity tests.
+
+## Where things stand
+
+1. **Reference engine hardened this session** (audit items 6, 8, 11,
+   18 fixed with regression tests in `tests/test_mandate_fixes.py`):
+   real token counting with honestly-labelled estimates; supporting
+   model calls accounted (`support.usage` events, included in caps);
+   empty command allowlist denies; resume restores the frozen
+   execution configuration recorded in `run.created`.
+2. **Desktop stack decided with evidence** (ADRs 002/003,
+   BUILD_STATUS.md): Tauri 2 is blocked in this build environment
+   (no webkit2gtk/gtk pkg-config entries, no passwordless sudo). The
+   product shell is egui/eframe - fully Rust, zero system deps on the
+   user's Ubuntu 22.04 target. In this sandbox the window cannot open
+   (`libxkbcommon-x11` missing), so the UI is verified headlessly with
+   egui_kittest; the binary compiles and the same UI code runs on
+   screen outside the sandbox.
+3. **Rust workspace scaffolded** at `rust/` (`las-core`,
+   `las-desktop`); the egui shell builds; kittest added.
+
+## What is NOT done (do not claim otherwise)
+
+- The Rust agent domain (agents, sessions, memory, inbox,
+  communication, channels, teams/topology, projects) - being built;
+  nothing of it is complete yet.
+- Shared inference scheduler, context rollover, MCP client, hardened
+  web fetch, Landlock sandboxing for run_command (audit items 5, 10,
+  12), recursive module registry (item 14).
+- Real-server capability tests and real-model benchmark (items 19,
+  20) - blocked by the sandbox; harnesses must ship for the user.
+- `.deb`/AppImage packaging, version unification (Python 0.3.0 vs
+  Rust workspace 0.4.0), the 14-area desktop UI, acceptance scenarios
+  19.1-19.8.
+
+## How to run everything
 
 ```bash
-python3 -m unittest discover -s tests        # full suite incl. architecture checks
-python tools/removal_test.py reporting       # disposable module removal test
-python3 -m las selftest                      # end-to-end against the mock
-python3 -m las serve --port 0                # loopback API (token in <data>/api-token)
-python3 -m las templates list                # built-in + user templates
-python3 -m las replan RUN --apply PROPOSAL    # re-planning (PLN-6)
-python3 -m las compare RUN_A RUN_B            # run diff (OBS-6)
-python3 -m las data status                   # retention and run counts
+# Python reference engine + CLI + GUI (behavioral reference)
+python3 -m unittest discover -s tests     # full suite (GUI classes skip headless)
+Xvfb :99 -screen 0 1280x820x24 &          # then: DISPLAY=:99 python3 -m unittest tests.test_gui
+python3 -m las selftest                   # end-to-end against the mock
+
+# Rust product engine
+source "$HOME/.cargo/env"
+cd rust && cargo test --workspace         # las-core unit + parity, desktop kittest
+cd rust && cargo build --release
 ```
 
-## Architecture quick map
+The sandbox recycles background processes between turns: restart Xvfb
+before GUI tests; Rust lives in `~/.cargo`.
 
-- las/app — host: registry (manifest discovery), capabilities (enable/disable), CLI
-- las/shared — kernel: plan/provider/events/message/module contracts, tool catalog
-- las/modules — providers(+mock child), planning, planquality, execution
-  (driver/attempt/gates/controls/budgets/engine/runstate), context, handoffs,
-  security (workspace/tools), storage, reporting, selftest, api
-- Enforcement: tests/test_architecture.py (9 AST rules + size fitness),
-  tests/test_registry.py, tests/test_module_lifecycle.py,
-  tools/removal_test.py — all run in the normal suite and in CI.
+## How to continue
 
-## Caveats recorded honestly
+- Read `BUILD_STATUS.md` first (audit table with evidence, decisions,
+  exact next action) and this file. Work in the repository, commit
+  reviewable increments, update both files after each meaningful task
+  (mandate section 22).
+- Python fixes go with regression tests; Rust modules go with unit
+  tests and, where behavior mirrors the Python engine, parity tests.
+- Never mark a capability complete without a test that exercises it;
+  record environment-blocked verifications explicitly instead.
 
-- CI runs on GitHub; outcomes were not observable from this sandbox
-  (identical local commands passed).
-- The host cli.py remains a documented size exception (S5b deferred).
-- No legacy shims remain (S7 done); R8 enforces the structural invariant.
-- One broken intermediate commit (17be6dd) was pushed during M1 work and
-  repaired in the following commit; history shows both.
+## Key paths
+
+- `las/` Python reference engine, CLI, tkinter GUI (UX reference).
+- `rust/crates/las-core` Rust engine (in progress).
+- `rust/crates/las-desktop` egui shell + kittest headless UI tests.
+- `docs/adr/` decision records.
+- `tests/test_mandate_fixes.py` audit-item regression tests.
+- `BUILD_STATUS.md` audit table, decisions, exact next action.

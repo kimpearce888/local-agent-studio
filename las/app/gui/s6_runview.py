@@ -428,22 +428,11 @@ class RunViewScreen(ttk.Frame):
             self.app.session.decide("resume")
             self.app.live.configure(text="Resuming")
             return
-        # Resume a paused/failed run from history: a fresh session.
-        state = self.app.engine.state(self.run_id)
-        models = self.app.default_models()
-        if not models:
-            info_dialog(self, "Resume",
-                        "Add a provider first, then resume.")
-            return
-        from las.modules.execution import DriverConfig
+        # Resume a paused/failed run from history: a fresh session with
+        # the ORIGINAL frozen configuration (item 18) - the engine
+        # restores models and config from run.created.
         from las.app.gui.runner import RunSession
-        caps = self.app.store.get_setting
-        config = DriverConfig(
-            failure_policy=caps("failure_policy") or "ask",
-            cap_tokens_run=int(caps("cap_tokens_run") or 200000),
-            cap_wall_minutes_run=float(caps("cap_wall_minutes_run") or 60),
-            context_length=int(caps("context_length") or 8192))
-        self.app.start_run(self.run_id, models, config)
+        self.app.start_run(self.run_id)
 
     # -- session events ------------------------------------------------------------
 
