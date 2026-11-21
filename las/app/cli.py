@@ -130,18 +130,23 @@ def cmd_plan(args) -> int:
     attachments_block = ""
     imported_attachments = 0
     if getattr(args, "attach", None):
-        from las.modules.attachments import (AttachmentError, import_file,
-                                             manifest_block)
+        try:
+            attachments_mod = ModuleRegistry().load(
+                "attachments", Store(args.data_dir).get_setting)
+        except Exception as exc:  # noqa: BLE001 - disabled module
+            print(str(exc))
+            return EXIT_INVALID
         entries = []
         for path_arg in args.attach:
             try:
                 # The plan id is not known before planning; import under a
                 # staging id and re-key the directory afterwards.
-                entries.append(import_file(path_arg, args.data_dir, "_incoming"))
-            except AttachmentError as exc:
+                entries.append(attachments_mod.import_file(
+                    path_arg, args.data_dir, "_incoming"))
+            except attachments_mod.AttachmentError as exc:
                 print(str(exc))
                 return EXIT_INVALID
-        attachments_block = manifest_block(entries)
+        attachments_block = attachments_mod.manifest_block(entries)
         imported_attachments = len(entries)
     result = planner.plan(args.goal, {
         "granularity": args.granularity, "max_tasks": args.max_tasks},
@@ -255,9 +260,9 @@ def cmd_run(args) -> int:
     # PLN-7/TLS-8: the plan's attachments land in the run workspace so
     # tasks can read them with the jailed file tools.
     try:
-        from las.modules.attachments import copy_to_workspace
-        copied = copy_to_workspace(args.data_dir, plan.id,
-                                   store.workspace_dir(run_id))
+        attachments_mod = ModuleRegistry().load("attachments", store.get_setting)
+        copied = attachments_mod.copy_to_workspace(
+            args.data_dir, plan.id, store.workspace_dir(run_id))
         if copied:
             print(f"Attachments in workspace: {', '.join(copied)}")
     except Exception:  # noqa: BLE001 - optional module, never blocks a run
