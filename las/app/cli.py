@@ -13,6 +13,7 @@ root - parser, dispatch and the backward-compat import surface.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from las.app.commands.common import (  # noqa: F401 - re-exported surface
@@ -251,7 +252,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run_id")
     p.set_defaults(func=cmd_verify)
 
+    p = sub.add_parser("gui", parents=[common],
+                       help="Launch the desktop app (spec sections 3-4, 9)")
+    p.add_argument("--data", default=None, help="data directory (default: as serve)")
+    p.set_defaults(func=cmd_gui)
+
     return parser
+
+
+def cmd_gui(args) -> int:
+    """Desktop app entry point."""
+    from las.app.gui import main as gui_main
+    if getattr(args, "data", None):
+        os.environ["LAS_DATA_DIR"] = args.data
+    return gui_main()
 
 
 def main(argv=None) -> int:

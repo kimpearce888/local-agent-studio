@@ -332,6 +332,25 @@ telemetry and attachments (planning correctly refuses removal as core);
 - Benchmark at the full PRD sample: 1,000/1,000 forced kills resumed.
 - Released 0.2.1 (CHANGELOG, tag). 304 tests green.
 
+## Continuation session 7 (2026-11-21, night 3) - the complete GUI (M2)
+
+- The "desktop shell blocked: no Rust toolchain" verdict was wrong and
+  got re-tested: tkinter 9.0 and Xvfb exist in the sandbox, so the
+  whole GUI was built pure-stdlib. All 13 screens (S1 wizard, S2 runs,
+  S3 goal, S4 studio, S5 context, S6 run view, S7 gate, S8 failure,
+  S9 providers, S10 library, S11 settings, S12 export, S13
+  diagnostics) plus the shell (nav, top bar, command palette, F6
+  regions, shortcut registry with editor, three themes, text scale).
+- Engine-side additions to support it: Planner cancel_check/on_reply
+  hooks, summary-cache columns (started/duration/models) with a
+  cache-migration path, models recorded in run.created, and a GUI
+  network log through a registry proxy.
+- The GUI work found one real bug (dependency direction inverted in
+  the studio's add_dependency) and one UI-side livelock (run-view
+  selection ping-pong) - both fixed with regression coverage.
+- 22 GUI tests under Xvfb; 326 total green with a display, 304 headless
+  (GUI classes skip cleanly). Released 0.3.0.
+
 ## Remaining work (honest list)
 
 - M1 items not feasible in this sandbox: nightly contract tests against

@@ -128,6 +128,11 @@ class PlanResult:
     raw_replies: list[str] = field(default_factory=list)
     critique: list[dict] = field(default_factory=list)
     error: Optional[str] = None
+    cancelled: bool = False
+
+
+class CancelledPlanning(Exception):
+    """Raised by a GUI cancel_check between planner rounds."""
 
 
 def _planner_user_message(goal: str, options: dict) -> str:
@@ -165,25 +170,39 @@ class Planner:
     """Runs the planner session with the repair loop (spec 5.1)."""
 
     def __init__(self, adapter: Adapter, model: str, params: Optional[dict] = None,
-                 json_schema_supported: bool = True):
+                 json_schema_supported: bool = True, on_reply=None):
         self.adapter = adapter
         self.model = model
         self.params = params or {"temperature": 0.2, "max_tokens": 4096}
         self.json_schema_supported = json_schema_supported
+        # Optional round callback (GUI progress): called with each raw
+        # planner reply as it lands.
+        self.on_reply = on_reply
 
     def plan(self, goal: str, options: Optional[dict] = None,
-             attachments_block: str = "") -> PlanResult:
+             attachments_block: str = "",
+             cancel_check=None) -> PlanResult:
+        """Plan a goal.  ``cancel_check`` (used by the GUI) is polled
+        before each planner call; raising CancelledPlanning stops between
+        rounds instead of inside a provider call."""
         options = options or {}
         request = self._request(goal, options, attachments_block)
         history: list[Message] = list(request.messages)
         result = PlanResult(plan=None, valid=False)
 
         try:
+            if cancel_check is not None:
+                cancel_check()
             reply = _collect_text(self.adapter.chat(request))
         except ProviderError as exc:
             result.error = exc.code
             return result
+        except CancelledPlanning:
+            result.cancelled = True
+            return result
         result.raw_replies.append(reply)
+        if self.on_reply is not None:
+            self.on_reply(reply)
 
         for round_no in range(MAX_REPAIR_ROUNDS + 1):
             draft = _parse_reply(reply)
@@ -204,6 +223,12 @@ class Planner:
             if round_no == MAX_REPAIR_ROUNDS:
                 break
             # Repair round: original request + invalid reply + rule list.
+            try:
+                if cancel_check is not None:
+                    cancel_check()
+            except CancelledPlanning:
+                result.cancelled = True
+                return result
             history = history + [Message("assistant", reply),
                                  Message("user", _repair_message(result.issues))]
             repair_request = ChatRequest(
@@ -212,6 +237,8 @@ class Planner:
                 params=dict(self.params))
             try:
                 reply = _collect_text(self.adapter.chat(repair_request))
+                if self.on_reply is not None:
+                    self.on_reply(reply)
             except ProviderError as exc:
                 result.error = exc.code
                 break

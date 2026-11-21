@@ -25,7 +25,8 @@ class Engine:
         self.store = Store(data_dir)
 
     def create_run(self, plan: Plan, cap_tokens: int | None = None,
-                   cap_wall_minutes: int | None = None, title: str = "") -> str:
+                   cap_wall_minutes: int | None = None, title: str = "",
+                   models: dict | None = None) -> str:
         run_id = ("run-" + time.strftime("%Y%m%d-%H%M%S") + "-"
                   + secrets.token_hex(6))
         caps = {
@@ -36,6 +37,7 @@ class Engine:
             "plan_id": plan.id,
             "plan_version_id": f"{plan.id}@{plan.created_at}",
             "title": title or plan.title,
+            "models": dict(models) if models else {},
             "goal_hash": hashlib.sha256(plan.goal.encode("utf-8")).hexdigest(),
             "caps": caps,
             "plan": plan.to_obj(),
@@ -135,6 +137,27 @@ class Engine:
                     state = self.state(run_id)
                 except (ValueError, Exception):
                     continue
+                first = self.store.first_event(run_id)
+                models = (first.payload.get("models") or {}) if first else {}
+                worker = models.get("default", ("", ""))[1]
+                planner = models.get("planner", ("", ""))[1] or worker
+                started = first.ts if first else ""
+                duration_s = ""
+                last_ts = self.store.last_activity(run_id)
+                if started and last_ts:
+                    try:
+                        from datetime import datetime
+                        t0 = datetime.fromisoformat(started)
+                        t1 = datetime.fromisoformat(last_ts)
+                        duration_s = max(0, int((t1 - t0).total_seconds()))
+                    except ValueError:
+                        duration_s = ""
+                if not worker:
+                    for ts in state.tasks.values():
+                        if ts.attempts:
+                            worker = ts.attempts[0].model or worker
+                            planner = planner or worker
+                            break
                 cached = {
                     "run_id": run_id,
                     "status": state.status,
@@ -143,12 +166,20 @@ class Engine:
                     "tasks_done": sum(1 for t in state.tasks.values()
                                       if t.state == "succeeded"),
                     "tokens": state.tokens_used(),
+                    "started": started,
+                    "duration_s": duration_s,
+                    "planner_model": planner,
+                    "worker_model": worker,
                 }
                 self.store.save_summary(
                     run_id, self.store.current_seq(run_id),
                     status=cached["status"], title=cached["title"],
                     tasks_total=cached["tasks_total"],
-                    tasks_done=cached["tasks_done"], tokens=cached["tokens"])
+                    tasks_done=cached["tasks_done"], tokens=cached["tokens"],
+                    started=cached["started"],
+                    duration_s=cached["duration_s"],
+                    planner_model=cached["planner_model"],
+                    worker_model=cached["worker_model"])
             if status and cached["status"] != status:
                 continue
             rows.append(cached)

@@ -133,6 +133,7 @@ class Store:
                 self._backup(f"migrate_v{stored}_to_v{DB_SCHEMA_VERSION}")
                 db.execute("UPDATE meta SET value=? WHERE key='db_schema_version'",
                            (str(DB_SCHEMA_VERSION),))
+        self._ensure_summary_columns()
         db.commit()
 
     def _backup(self, tag: str) -> None:
@@ -250,6 +251,24 @@ class Store:
         with open(path, encoding="utf-8") as fh:
             return json.load(fh)
 
+    def _ensure_summary_columns(self) -> None:
+        """Extend the run_summary cache with columns added after 0.2.0.
+
+        It is a derived cache: when a column is missing we add it and
+        clear the table - every row replays on demand, so nothing is
+        lost (unlike a data migration, no version bump is needed).
+        """
+        have = {r[1] for r in self.db.execute(
+            "PRAGMA table_info(run_summary)")}
+        wanted = ["started", "duration_s", "planner_model", "worker_model"]
+        added = False
+        for col in wanted:
+            if col not in have:
+                self.db.execute(f"ALTER TABLE run_summary ADD COLUMN {col}")
+                added = True
+        if added:
+            self.db.execute("DELETE FROM run_summary")
+
     # -- providers ----------------------------------------------------------
 
     def save_provider(self, profile: ProviderProfile) -> None:
@@ -354,19 +373,29 @@ class Store:
             return None
         return {"run_id": row["run_id"], "status": row["status"],
                 "title": row["title"], "tasks_total": row["tasks_total"],
-                "tasks_done": row["tasks_done"], "tokens": row["tokens"]}
+                "tasks_done": row["tasks_done"], "tokens": row["tokens"],
+                "started": row["started"] or "",
+                "duration_s": row["duration_s"] if row["duration_s"] != "" else "",
+                "planner_model": row["planner_model"] or "",
+                "worker_model": row["worker_model"] or ""}
 
     def save_summary(self, run_id: str, updated_seq: int, status: str,
                      title: str, tasks_total: int, tasks_done: int,
-                     tokens: int) -> None:
+                     tokens: int, started: str = "", duration_s: str = "",
+                     planner_model: str = "", worker_model: str = "") -> None:
         self.db.execute(
             "INSERT INTO run_summary (run_id, updated_seq, status, title,"
-            " tasks_total, tasks_done, tokens) VALUES (?,?,?,?,?,?,?)"
+            " tasks_total, tasks_done, tokens, started, duration_s,"
+            " planner_model, worker_model) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
             " ON CONFLICT(run_id) DO UPDATE SET updated_seq=excluded.updated_seq,"
             " status=excluded.status, title=excluded.title,"
             " tasks_total=excluded.tasks_total, tasks_done=excluded.tasks_done,"
-            " tokens=excluded.tokens",
-            (run_id, updated_seq, status, title, tasks_total, tasks_done, tokens))
+            " tokens=excluded.tokens, started=excluded.started,"
+            " duration_s=excluded.duration_s,"
+            " planner_model=excluded.planner_model,"
+            " worker_model=excluded.worker_model",
+            (run_id, updated_seq, status, title, tasks_total, tasks_done,
+             tokens, started, duration_s, planner_model, worker_model))
         self.db.commit()
 
     def last_activity(self, run_id: str) -> str:

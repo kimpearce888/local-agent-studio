@@ -5,6 +5,56 @@ follow semantic versioning. Documentation, this changelog and migration
 notes are release gates under the [release policy](docs/user/release-policy.md),
 not follow-ups.
 
+## [0.3.0] - 2026-11-21
+
+### Added
+
+- **The desktop app (M2): all thirteen screens of the specification,
+  pure tkinter, zero new dependencies.** `studio gui` opens the shell
+  with the five-entry navigation, the top bar (goal title, status chip,
+  provider health, budget meter, command palette), first-launch setup
+  wizard with server detection and the capped self-test, the run
+  history with filters/sorting/pagination and row actions, the goal
+  composer with templates and round-by-round planner progress and
+  cancel, the Studio (canvas with sequence/data edges, drag reorder
+  with dependency refusal, port-to-port links, the accessible list
+  view, the eight-tab inspector, the Constraints/Lint/Log dock,
+  preflight, undo/redo, autosave), context preview, the live run view
+  (task rail, transcript with UNTRUSTED labelling, handoff and files
+  tabs, pause/cancel/resume controls, budget meter, completion card),
+  the approval-gate and failure dialogs with every spec action, the
+  providers screen with capability test table, the library, the
+  seven-section settings with a shortcut editor, export and redacted
+  diagnostics dialogs.  Light, dark and high-contrast themes; text
+  scale 100-200 percent; every status icon+text; F6 region cycling;
+  dialog focus trapping; the keyboard map of spec section 9.
+- **Network log (S11 Privacy)**: every connection the GUI makes flows
+  through a logging proxy on the provider registry and is shown in
+  Settings → Privacy.
+- **GUI tests (22) under Xvfb**: all screens instantiate, the AC-11
+  keyboard flow (reorder, add dependency, delete with dependents
+  warning), canvas/list parity, WCAG contrast checks of all three
+  palettes, non-blank render checks, first-launch wizard path.
+
+### Changed
+
+- `Planner.plan` accepts `cancel_check` and `on_reply` callbacks
+  (backward compatible) so the GUI can cancel between rounds and show
+  each round's reply.
+- The run-summary cache gained `started`, `duration_s`,
+  `planner_model` and `worker_model` columns for the history table;
+  legacy caches migrate by ALTER + re-derive (the table is a derived
+  cache, no data migration is needed).
+- `Engine.create_run` records the planner/worker models in the
+  `run.created` event.
+
+### Fixed
+
+- **GUI development found and fixed a real engine-side bug**: the
+  Studio's `add_dependency` had its direction inverted (the provider
+  task received the dependency instead of the consumer); tests pin the
+  forward-only rule.
+
 ## [0.2.1] - 2026-11-21
 
 ### Fixed
