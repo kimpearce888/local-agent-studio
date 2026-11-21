@@ -1,8 +1,6 @@
 """Provider adapter contract (spec 7.1) — moved to ``las.shared.provider_contract``.
 
-This module remains as a compatibility re-export during the modular
-migration (ADR-0004, step S7 removes it). Import from ``las.shared`` in
-new code.
+Compatibility re-export at the pre-migration path; step S7 removes it.
 """
 
 from las.shared.provider_contract import (

@@ -15,12 +15,13 @@ import sys
 from typing import Optional
 
 from las import __version__
-from las.export import ExportOptions, export_run
+from las.app.capabilities import require_module, set_enabled
+from las.app.registry import ModuleDisabledError, ModuleNotInstalledError, ModuleRegistry
 from las.linter import errors as lint_errors, lint
 from las.messages import message, message_with_fix
 from las.planner import Planner
 from las.providers import (
-    PRESETS, ProviderRegistry, MockAdapter, build_adapter, probe as probe_adapter,
+    PRESETS, ProviderRegistry, build_adapter, probe as probe_adapter,
     detect_servers,
 )
 from las.providers.base import ProviderError
@@ -80,6 +81,10 @@ def _load_plan_arg(store: Store, name: str, variables: dict) -> Plan:
 
 def _registry_for(store: Store, provider_name: Optional[str]) -> tuple[ProviderRegistry, str]:
     profiles = store.list_providers()
+    # Authoritative enablement boundary: a mock profile needs the
+    # providers.mock module (which is independently disableable).
+    if any(p.kind == "mock" for p in profiles):
+        require_module(ModuleRegistry(), "providers.mock", store.get_setting)
     if provider_name:
         profile = next((p for p in profiles if p.id == provider_name or p.name == provider_name),
                        None)
@@ -416,16 +421,59 @@ def cmd_task_control(args, action: str) -> int:
 
 
 def cmd_export(args) -> int:
+    store = Store(args.data_dir)
+    # Authoritative enablement boundary: reporting is independently
+    # disableable, so the command loads it through the registry.
+    reporting = ModuleRegistry().load("reporting", store.get_setting)
     engine = Engine(args.data_dir)
     state = engine.state(args.run_id)
-    options = ExportOptions(ai_notice=not args.no_ai_notice,
-                            redact_prompts=args.redact_prompts)
+    options = reporting.ExportOptions(ai_notice=not args.no_ai_notice,
+                                       redact_prompts=args.redact_prompts)
     output = args.output or os.path.join(
         engine.store.export_dir(args.run_id),
         f"report.{ 'json' if args.format == 'json' else 'md'}")
-    result = export_run(state, engine.store, fmt=args.format, options=options,
-                        output_path=output)
+    result = reporting.export_run(state, engine.store, fmt=args.format, options=options,
+                                  output_path=output)
     print(f"Exported {result.size_bytes} bytes to {result.path}")
+    return EXIT_OK
+
+
+def cmd_modules(args) -> int:
+    store = Store(args.data_dir)
+    registry = ModuleRegistry()
+    if args.modules_cmd in ("enable", "disable"):
+        if not args.module_id:
+            print("usage: studio modules enable|disable MODULE_ID")
+            return EXIT_INVALID
+        try:
+            set_enabled(registry, args.module_id, args.modules_cmd == "enable",
+                        store.get_setting, store.set_setting)
+        except ValueError as exc:
+            print(str(exc))
+            return EXIT_INVALID
+        state = "enabled" if args.modules_cmd == "enable" else "disabled"
+        print(f"Module {args.module_id} {state} (takes effect on the next studio "
+              f"command; data is never deleted).")
+        return EXIT_OK
+    # list (default)
+    from las.app.capabilities import is_enabled
+    rows = []
+    for mid in registry.ids():
+        m = registry.get(mid)
+        rows.append({
+            "id": mid, "version": m.version, "core": m.core,
+            "enabled": is_enabled(registry, mid, store.get_setting),
+            "summary": m.summary,
+            "requires": m.requires, "optional": m.optional,
+            "commands": [c.name for c in m.commands],
+        })
+    if args.json_out:
+        _print_json(rows)
+        return EXIT_OK
+    for r in rows:
+        flag = "core" if r["core"] else ("on " if r["enabled"] else "off")
+        print(f"{r['id']:<16} {flag}  v{r['version']}  {r['summary']}")
+    print("Enable or disable with:  studio modules enable|disable MODULE_ID")
     return EXIT_OK
 
 
@@ -505,13 +553,17 @@ def cmd_providers(args) -> int:
 
 
 def cmd_selftest(args) -> int:
-    from las.selftest import run_selftest
+    store = Store(args.data_dir)
+    # Authoritative enablement boundary: selftest is independently
+    # disableable; the default self-test additionally needs the mock.
+    selftest_mod = ModuleRegistry().load("selftest", store.get_setting)
     adapter = None
     if args.provider:
-        store = Store(args.data_dir)
         registry, pid = _registry_for(store, args.provider)
         adapter = registry.get(pid)
-    result = run_selftest(args.data_dir, adapter)
+    else:
+        require_module(ModuleRegistry(), "providers.mock", store.get_setting)
+    result = selftest_mod.run_selftest(args.data_dir, adapter)
     if args.json_out:
         _print_json({"ok": result.ok, "run_id": result.run_id,
                      "steps": result.steps, "tokens_used": result.tokens_used,
@@ -656,6 +708,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", dest="json_out", action="store_true")
     p.set_defaults(func=cmd_selftest)
 
+    p = sub.add_parser("modules", parents=[common], help="List, enable or disable modules")
+    p.add_argument("modules_cmd", nargs="?", choices=("list", "enable", "disable"),
+                   default="list")
+    p.add_argument("module_id", nargs="?", help="module id (enable/disable)")
+    p.add_argument("--json", dest="json_out", action="store_true")
+    p.set_defaults(func=cmd_modules)
+
     p = sub.add_parser("verify", parents=[common], help="Verify a run's event hash chain")
     p.add_argument("run_id")
     p.set_defaults(func=cmd_verify)
@@ -670,6 +729,9 @@ def main(argv=None) -> int:
         return args.func(args)
     except SystemExit:
         raise
+    except (ModuleDisabledError, ModuleNotInstalledError) as exc:
+        print(str(exc))
+        return EXIT_INVALID
     except PlanFormatError as exc:
         print(f"PLAN-INVALID: {exc.detail}")
         return EXIT_INVALID

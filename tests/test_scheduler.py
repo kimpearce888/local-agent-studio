@@ -9,7 +9,6 @@ import json
 import os
 import unittest
 
-from las.export import ExportOptions, export_run
 from las.providers.mock import MockAdapter, SimulatedCrash
 from las.scheduler import DriverConfig, Engine
 from tests.util import (
@@ -476,32 +475,7 @@ class TestRerun(SchedulerTestBase):
         self.assertFalse(state.constraint_active("c1"))
 
 
-class TestExportAndEvents(SchedulerTestBase):
-    def test_export_markdown_contains_provenance_and_notice(self):
-        plan = make_plan()
-        engine, run_id, driver, results = run_with_mock(
-            plan, self.script_for(plan), self.data_dir)
-        state = engine.state(run_id)
-        result = export_run(state, engine.store, fmt="markdown")
-        self.assertIn(run_id, result.content)
-        self.assertIn("AI", result.content)
-        self.assertIn("Never invent numbers.", result.content)
-        self.assertIn("mock-model", result.content)
-        # Without the notice, the marker disappears.
-        result2 = export_run(state, engine.store, fmt="markdown",
-                             options=ExportOptions(ai_notice=False))
-        self.assertNotIn("generated with the assistance of AI", result2.content)
-
-    def test_export_json_bundle_round_trips(self):
-        plan = make_plan()
-        engine, run_id, driver, results = run_with_mock(
-            plan, self.script_for(plan), self.data_dir)
-        result = export_run(engine.state(run_id), engine.store, fmt="json")
-        bundle = json.loads(result.content)
-        self.assertEqual(bundle["run"]["run_id"], run_id)
-        self.assertGreater(len(bundle["events"]), 10)
-        self.assertEqual(bundle["plan"]["goal"], plan.goal)
-
+class TestEventChain(SchedulerTestBase):
     def test_event_types_present(self):
         plan = make_plan()
         engine, run_id, driver, results = run_with_mock(

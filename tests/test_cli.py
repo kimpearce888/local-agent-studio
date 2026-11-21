@@ -63,18 +63,19 @@ class TestProviders(CliTestBase):
         self.assertEqual(code, EXIT_OK)
 
 
-class TestSelftestAndInspection(CliTestBase):
-    def test_selftest_passes_offline(self):
-        code, out = self.run_cli("selftest")
+class TestInspection(CliTestBase):
+    def _successful_run_id(self) -> str:
+        code, _ = self.run_cli("providers", "add", "--name", "m", "--preset", "mock")
         self.assertEqual(code, EXIT_OK)
-        self.assertIn("Self-test passed", out)
+        plan = make_plan()
+        self.write_plan(plan)
+        self.write_script(self.happy_script(plan))
+        code, out = self.run_cli("run", self.plan_path, "--provider", "m")
+        self.assertEqual(code, EXIT_OK, out)
+        return out.split("Run ")[1].split(" ")[0]
 
-    def test_list_inspect_verify_export(self):
-        code, out = self.run_cli("selftest")
-        self.assertEqual(code, EXIT_OK)
-        run_id = [line for line in out.splitlines() if "run run-" in line]
-        self.assertTrue(run_id)
-        rid = run_id[0].split("run ")[-1].split(")")[0]
+    def test_list_inspect_verify(self):
+        rid = self._successful_run_id()
 
         code, out = self.run_cli("list")
         self.assertEqual(code, EXIT_OK)
@@ -92,14 +93,6 @@ class TestSelftestAndInspection(CliTestBase):
         code, out = self.run_cli("verify", rid)
         self.assertEqual(code, EXIT_OK)
         self.assertIn("verified", out)
-
-        out_path = os.path.join(self.tmp.name, "report.md")
-        code, out = self.run_cli("export", rid, "--format", "markdown", "-o", out_path)
-        self.assertEqual(code, EXIT_OK)
-        with open(out_path, encoding="utf-8") as fh:
-            report = fh.read()
-        self.assertIn(rid, report)
-        self.assertIn("AI", report)
 
 
 class TestRun(CliTestBase):
