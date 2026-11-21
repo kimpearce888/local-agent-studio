@@ -11,8 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from las.schema.plan import Plan
-from las.store import Event, Store
+from las.shared.events_contract import Event
+from las.shared.plan_contract import Plan
+from las.store import Store
 
 RUN_STATES = ("queued", "running", "paused", "succeeded", "failed", "cancelled")
 TASK_STATES = ("pending", "ready", "stale", "awaiting_approval", "running",

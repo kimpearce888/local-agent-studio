@@ -23,13 +23,15 @@ import time
 from typing import Optional
 
 from las.providers.base import (
-    Adapter, CapabilityRecord, ChatRequest, Message, ProviderError, StreamEvent,
-    ToolCall, Usage,
+    Adapter, CapabilityRecord, ChatRequest, Message, ProviderError, SimulatedCrash,
+    StreamEvent, ToolCall, Usage,
 )
 
-
-class SimulatedCrash(Exception):
-    """Propagates out of the driver, leaving a truncated event log (AC-06)."""
+__all__ = [
+    "Adapter", "CapabilityRecord", "ChatRequest", "Message", "ProviderError",
+    "SimulatedCrash", "StreamEvent", "ToolCall", "Usage",
+    "MockAdapter", "default_caps",
+]
 
 
 def default_caps(context_length: int = 8192) -> CapabilityRecord:

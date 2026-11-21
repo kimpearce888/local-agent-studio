@@ -21,8 +21,7 @@ from las.context import (
     AssembledContext, TEXT_TOOL_PROTOCOL, assemble_context, estimate_tokens,
     parse_text_tool_call,
 )
-from las.providers.base import Adapter, ChatRequest, Message, ProviderError, ToolCall
-from las.providers.mock import SimulatedCrash
+from las.providers.base import Adapter, ChatRequest, Message, ProviderError, SimulatedCrash, ToolCall
 from las.providers import ProviderRegistry
 from las.runstate import RunState, replay
 from las.schema.handoff import EvidenceContext, Handoff, extract_handoff, validate_handoff

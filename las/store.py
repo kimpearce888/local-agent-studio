@@ -16,26 +16,14 @@ import os
 import secrets
 import shutil
 import sqlite3
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
 from las import APP_NAME, SCHEMA_VERSION
+from las.shared.events_contract import EVENT_TYPES, Event
+from las.shared.provider_contract import ProviderProfile
 
 DB_SCHEMA_VERSION = 1
-
-EVENT_TYPES = (
-    "run.created", "run.paused", "run.resumed", "run.cancelled",
-    "task.ready", "task.stale",
-    "gate.waiting", "gate.approved", "gate.rejected",
-    "attempt.started", "attempt.aborted",
-    "message.added", "tool.called", "tool.denied",
-    "compaction.applied",
-    "handoff.recorded", "handoff.edited",
-    "constraint.released",
-    "task.succeeded", "task.failed", "task.skipped",
-    "run.succeeded", "run.failed",
-)
 
 SETTINGS_DEFAULTS: dict[str, Any] = {
     "ui.theme": "system",
@@ -68,58 +56,6 @@ def utc_now_iso() -> str:
 
 def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-@dataclass
-class Event:
-    event_id: str
-    run_id: str
-    seq: int
-    ts: str
-    schema_version: int
-    type: str
-    payload: dict
-    prev_hash: str
-    hash: str
-
-    def to_obj(self) -> dict:
-        return {
-            "event_id": self.event_id,
-            "run_id": self.run_id,
-            "seq": self.seq,
-            "ts": self.ts,
-            "schema_version": self.schema_version,
-            "type": self.type,
-            "payload": self.payload,
-            "prev_hash": self.prev_hash,
-            "hash": self.hash,
-        }
-
-
-@dataclass
-class ProviderProfile:
-    id: str
-    name: str
-    kind: str                    # preset name or "mock" or "generic"
-    base_url: str = ""
-    auth_env: str = ""           # env:NAME reference; keys are never stored in plans/events
-    wire: str = "chat"           # chat (Chat Completions) | responses (Open Responses)
-    extra_headers: dict = field(default_factory=dict)
-    timeout_seconds: float = 60.0
-    created_at: str = ""
-
-    def to_obj(self) -> dict:
-        return {
-            "id": self.id, "name": self.name, "kind": self.kind, "base_url": self.base_url,
-            "auth_env": self.auth_env, "wire": self.wire, "extra_headers": self.extra_headers,
-            "timeout_seconds": self.timeout_seconds, "created_at": self.created_at,
-        }
-
-    @classmethod
-    def from_obj(cls, obj: dict) -> "ProviderProfile":
-        return cls(**{k: obj.get(k, cls.__dataclass_fields__[k].default)
-                      for k in ("id", "name", "kind", "base_url", "auth_env", "wire",
-                                "extra_headers", "timeout_seconds", "created_at")})
 
 
 class Store:

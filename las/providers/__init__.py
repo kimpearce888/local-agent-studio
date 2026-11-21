@@ -10,7 +10,7 @@ from las.providers.mock import MockAdapter, SimulatedCrash, default_caps
 from las.providers.openai_compat import ChatCompletionsAdapter, ResponsesAdapter, resolve_api_key
 from las.providers.presets import PRESETS, Preset
 from las.providers.probe import detect_servers, probe
-from las.store import ProviderProfile
+from las.shared.provider_contract import ProviderProfile
 
 
 class ProviderRegistry:

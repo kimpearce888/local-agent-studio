@@ -27,6 +27,18 @@ PASSED / FAILED / BLOCKED / SKIPPED / NOT RUN — never inflated.
   the M2 Tauri shell cannot be compiled or tested in this environment — engine-side
   work proceeds, shell work is reported as blocked, not silently dropped.
 
+## S1 — Shared kernel extraction (ADR-0001)
+
+- Created `las/shared/`: `plan_contract` (plan v1 types/parsing/variables — validation
+  stays in `las.schema.plan` until S4), `provider_contract` (Adapter port, message
+  model, `ProviderProfile`, `SimulatedCrash`), `events_contract` (Event, EVENT_TYPES),
+  `messages` (moved). Old paths re-export the kernel (shims).
+- Fixed F-01: providers no longer import storage (`ProviderProfile` now lives in the
+  kernel). Fixed F-02: the engine no longer imports the mock provider
+  (`SimulatedCrash` is a kernel fault-injection signal; `selftest` keeps its declared
+  optional dependency on the mock).
+- Gate: `python3 -m unittest discover -s tests` — PASSED, 181 tests, zero test edits.
+
 ## Handover notes (maintained continuously)
 
 - To run everything: `python3 -m unittest discover -s tests`;
