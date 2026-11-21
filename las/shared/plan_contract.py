@@ -229,6 +229,8 @@ def _constraint_from_obj(obj: Any) -> Constraint:
 
 
 def _task_from_obj(obj: Any) -> Task:
+    # Public alias below; kept private for internal use.
+
     if not isinstance(obj, dict):
         raise PlanFormatError("A task is not a JSON object.")
     task_type = str(obj.get("type", "task"))
@@ -315,3 +317,7 @@ def substitute_variables(plan: Plan, values: dict[str, str]) -> Plan:
         t.instructions = sub(t.instructions)
         t.expected_output = sub(t.expected_output)
     return plan
+
+
+# Public constructor used by execution (replan) and planning.
+task_from_obj = _task_from_obj

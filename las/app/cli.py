@@ -28,7 +28,7 @@ from las.shared.provider_contract import ProviderError
 from las.modules.execution import DriverConfig, Engine
 from las.modules.planquality import validate_plan
 from las.shared.plan_contract import (
-    Plan, PlanFormatError, plan_variables, substitute_variables,
+    Plan, PlanFormatError, plan_variables, substitute_variables, task_from_obj,
 )
 from las.modules.storage import ProviderProfile, Store, TamperedLogError
 from las.modules.security import KNOWN_TOOLS
@@ -762,6 +762,65 @@ def cmd_delete(args) -> int:
     return EXIT_OK
 
 
+def cmd_replan(args) -> int:
+    """PLN-6: propose a revision of a run's remaining tasks, then apply the
+    stored proposal after review. Pinned (user-edited) tasks survive."""
+    store = Store(args.data_dir)
+    engine = Engine(args.data_dir)
+    try:
+        kept, remaining = engine.replan_target(args.run_id)
+    except ValueError as exc:
+        print(str(exc))
+        return EXIT_INVALID
+    if args.apply:
+        proposal = store.get_plan(args.apply)
+        if proposal is None:
+            print(f"No proposal plan {args.apply}.")
+            return EXIT_INVALID
+        try:
+            outcome = engine.apply_replan(
+                args.run_id, [task_from_obj(t) for t in proposal["tasks"]],
+                reason=f"applied proposal {args.apply}")
+        except ValueError as exc:
+            print(str(exc))
+            return EXIT_INVALID
+        print(f"Replanned {args.run_id}: removed {outcome['removed'] or '[]'}, "
+              f"pinned {outcome['pinned'] or '[]'}, added {outcome['added']}")
+        return EXIT_OK
+    # Propose: one planner call; the proposal is stored so the user approves
+    # exactly the diff that was shown. (Applying needs no provider.)
+    registry, provider_id = _registry_for(store, args.provider)
+    if not provider_id:
+        print("No provider configured. Add one first:  studio providers add ...")
+        return EXIT_PROVIDER
+    adapter = registry.get(provider_id)
+    model = args.model
+    if not model:
+        models = adapter.list_models()
+        model = models[0]["id"] if models else ""
+    from las.modules.planning import Planner
+    planner = Planner(adapter, model)
+    remaining_tasks = [t for t in state.plan.tasks
+                       if t.id not in set(kept)]
+    result = planner.replan(state.plan.goal, state.plan, kept,
+                            remaining_tasks, {})
+    if result.error or not result.valid:
+        print(f"Re-planning failed: {result.error or 'invalid proposal'}")
+        for i in result.issues:
+            print(f"  {i.rule}: {i.message}")
+        return EXIT_PROVIDER
+    store.save_plan(result.plan.to_obj())
+    removed = [t.id for t in remaining_tasks]
+    print(f"Proposal {result.plan.id} for run {args.run_id}:")
+    print(f"  replaces remaining tasks: {', '.join(removed)}")
+    print(f"  new tasks:")
+    for t in result.plan.tasks:
+        print(f"    + {t.id}: {t.title}")
+    print(f"\nReview it, then apply with:\n"
+          f"  studio replan {args.run_id} --apply {result.plan.id}")
+    return EXIT_OK
+
+
 def cmd_compare(args) -> int:
     """Compare two runs: plan diff and output diff (OBS-6)."""
     store = Store(args.data_dir)
@@ -1021,6 +1080,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm", action="store_true",
                    help="required; deletion is permanent")
     p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("replan", parents=[common],
+                       help="Propose and apply a replan of remaining tasks (PLN-6)")
+    p.add_argument("run_id")
+    p.add_argument("--apply", default="",
+                   help="apply a stored proposal plan id (from a previous run of this command)")
+    p.add_argument("--provider", default="", help="provider id or name")
+    p.add_argument("--model", default="", help="planner model")
+    p.set_defaults(func=cmd_replan)
 
     p = sub.add_parser("compare", parents=[common],
                        help="Compare two runs (OBS-6)")

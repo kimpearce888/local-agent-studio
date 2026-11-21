@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from las.shared.events_contract import Event
-from las.shared.plan_contract import Plan
+from las.shared.plan_contract import Plan, task_from_obj
 from las.modules.storage import Store
 
 RUN_STATES = ("queued", "running", "paused", "succeeded", "failed", "cancelled")
@@ -205,6 +205,19 @@ def replay(store: Store, run_id: str, plan: Plan) -> RunState:
             _task(state, p).handoff = dict(p.get("handoff") or {})
         elif ev.type == "handoff.edited":
             _task(state, p).handoff = dict(p.get("handoff") or {})
+        elif ev.type == "plan.replanned":
+            # PLN-6: pending tasks (never started ones) are replaced by the
+            # proposal's tasks; completed tasks and pinned edits survive.
+            payload = ev.payload or {}
+            removable = set(payload.get("removed", []))
+            new_tasks = [task_from_obj(t) for t in payload.get("tasks", [])]
+            kept = [t for t in state.plan.tasks if t.id not in removable]
+            state.plan.tasks = kept + new_tasks
+            for rid in removable:
+                state.tasks.pop(rid, None)
+            for nt in new_tasks:
+                if nt.id not in state.tasks:
+                    state.tasks[nt.id] = TaskState(nt.id)
         elif ev.type == "task.edited":
             # RUN-6: an edit of a pending task is part of the event log, so
             # replay applies it to the plan the run actually executes.

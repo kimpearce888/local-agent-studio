@@ -20,8 +20,8 @@ from las.shared.provider_contract import Adapter, ChatRequest, Message, Provider
 from las.modules.handoffs import strip_code_fences
 from las.modules.planquality import validate_plan
 from las.shared.plan_contract import (
-    Constraint, GRANULARITY_TASK_COUNTS, DEFAULT_TOOLS, Plan, PlanFormatError, Task,
-    ValidationIssue,
+    Constraint, GRANULARITY_TASK_COUNTS, DEFAULT_TOOLS, Plan, PlanFormatError,
+    Task, ValidationIssue, task_from_obj,
 )
 from las.shared.tool_catalog import KNOWN_TOOLS
 
@@ -226,6 +226,73 @@ class Planner:
                     first_bad))
         return result
 
+    def replan(self, goal: str, plan: Plan, done_task_ids: list[str],
+               remaining: list[Task],
+               options: Optional[dict] = None) -> PlanResult:
+        """Propose a replacement for the REMAINING tasks (PLN-6).
+
+        The reply is the same task JSON as planning, but it replaces only
+        the remaining tasks; completed tasks and the goal never change.
+        Validation runs on the synthetic full plan (kept + proposed), so a
+        proposal that breaks the plan contract is repaired or refused.
+        """
+        options = options or {}
+        kept = [t for t in plan.tasks if t.id in set(done_task_ids)]
+        user = _replan_user_message(goal, kept, remaining, options)
+        request = ChatRequest(
+            model=self.model,
+            messages=[Message("system", PLANNER_SYSTEM_PROMPT),
+                      Message("user", user)],
+            json_schema=PLAN_JSON_SCHEMA if self.json_schema_supported else None,
+            params=dict(self.params))
+        history: list[Message] = list(request.messages)
+        result = PlanResult(plan=None, valid=False)
+        try:
+            reply = _collect_text(self.adapter.chat(request))
+        except ProviderError as exc:
+            result.error = exc.code
+            return result
+        result.raw_replies.append(reply)
+        for round_no in range(MAX_REPAIR_ROUNDS + 1):
+            draft = _parse_reply(reply)
+            new_tasks: list[Task] = []
+            if draft is not None:
+                new_tasks = _tasks_from_draft(draft)
+            if draft is not None and new_tasks:
+                synthetic = Plan(
+                    id="replan-probe", title=plan.title, goal=goal,
+                    created_at=plan.created_at,
+                    options=plan.options, constraints=plan.constraints,
+                    tasks=kept + new_tasks)
+                issues = validate_plan(synthetic)
+                result.issues = issues
+                if not issues:
+                    result.plan = Plan(
+                        id=f"replan-{secrets.token_hex(4)}",
+                        title=plan.title, goal=goal, created_at=plan.created_at,
+                        options=plan.options, constraints=plan.constraints,
+                        tasks=new_tasks)
+                    result.valid = True
+                    return result
+            else:
+                result.issues = [ValidationIssue(
+                    "V-01", "The replan reply is not JSON in the expected format.")]
+            if round_no == MAX_REPAIR_ROUNDS:
+                break
+            history.append(Message("user", _repair_message(result.issues)))
+            try:
+                follow = ChatRequest(
+                    model=self.model, messages=history,
+                    json_schema=PLAN_JSON_SCHEMA if self.json_schema_supported
+                    else None, params=dict(self.params))
+                reply = _collect_text(self.adapter.chat(follow))
+            except ProviderError as exc:
+                result.error = exc.code
+                return result
+            result.raw_replies.append(reply)
+            result.repair_rounds = round_no + 1
+        return result
+
     def critique(self, goal: str, plan: Plan) -> list[dict]:
         """Optional critique pass (spec 5.1): at most five issues, suggestions only."""
         request = ChatRequest(
@@ -259,6 +326,45 @@ class Planner:
                       Message("user", _planner_user_message(goal, options))],
             json_schema=PLAN_JSON_SCHEMA if self.json_schema_supported else None,
             params=dict(self.params))
+
+
+def _replan_user_message(goal: str, kept: list, remaining: list,
+                         options: dict) -> str:
+    lines = [
+        "REVISE THE REMAINING TASKS of the plan below (PLN-6 re-planning).",
+        f"GOAL (unchanged):\n{goal}", "",
+        "COMPLETED TASKS (fixed, never change them; new tasks may need their outputs):",
+    ]
+    for t in kept:
+        lines.append(f"- {t.id}: {t.title} (output: {t.expected_output or 'n/a'})")
+    lines += ["", "CURRENT REMAINING TASKS (replace these as you see fit):"]
+    for t in remaining:
+        lines.append(f"- {t.id}: {t.title}")
+    lines += [
+        "",
+        "Return JSON with the FULL new set of remaining tasks "
+        "(same task fields as planning). Their needs may reference the "
+        "completed task ids above and each other, never later tasks.",
+        "Keep the last task a collector.",
+        SCHEMA_AS_TEXT,
+    ]
+    return "\n".join(lines)
+
+
+def _tasks_from_draft(draft: dict) -> list[Task]:
+    """Parse the task array out of a planner/replanner reply."""
+    tasks_obj = draft.get("tasks")
+    if not isinstance(tasks_obj, list):
+        return []
+    out: list[Task] = []
+    for obj in tasks_obj:
+        if not isinstance(obj, dict):
+            continue
+        try:
+            out.append(task_from_obj(obj))
+        except Exception:  # noqa: BLE001 - malformed task proposals are repaired
+            continue
+    return out
 
 
 def _parse_reply(reply: str) -> Optional[dict]:
@@ -325,7 +431,8 @@ def _plan_from_draft(draft: dict, goal: str, options: dict) -> Plan:
 def _longest_valid_prefix(plan: Plan, issues: list[ValidationIssue]) -> tuple[Plan, Optional[str]]:
     """Keep the longest prefix of tasks that pass the per-task rules."""
     from las.shared.plan_contract import (
-        INSTRUCTIONS_MAX, INSTRUCTIONS_MIN, MAX_NEEDS, MAX_TASK_CONSTRAINTS, TASK_ID_RE, TITLE_MAX,
+        INSTRUCTIONS_MAX, INSTRUCTIONS_MIN, MAX_NEEDS, MAX_TASK_CONSTRAINTS,
+        TASK_ID_RE, TITLE_MAX,
     )
     kept: list[Task] = []
     kept_ids: set[str] = set()

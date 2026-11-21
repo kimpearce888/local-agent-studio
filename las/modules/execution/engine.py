@@ -14,7 +14,7 @@ from las.modules.execution.budgets import DEFAULTS, DriverConfig
 from las.modules.execution.driver import RunDriver
 from las.modules.execution.runstate import RunState, replay
 from las.modules.providers import ProviderRegistry
-from las.shared.plan_contract import Plan
+from las.shared.plan_contract import Plan, task_from_obj
 from las.modules.storage import Store
 
 
@@ -55,6 +55,67 @@ class Engine:
 
     def verify(self, run_id: str) -> bool:
         return self.store.verify(run_id)
+
+    def replan_target(self, run_id: str) -> tuple[list, list]:
+        """(kept task ids, remaining pending tasks) for PLN-6."""
+        state = self.state(run_id)
+        if state.status in ("succeeded", "cancelled"):
+            raise ValueError(
+                f"Run {run_id} is {state.status}; there is nothing to replan.")
+        kept, remaining = [], []
+        for t in state.plan.tasks:
+            ts = state.tasks.get(t.id)
+            if ts is not None and ts.state != "pending":
+                kept.append(t.id)
+            else:
+                remaining.append(t)
+        return kept, remaining
+
+    def apply_replan(self, run_id: str, new_tasks: list,
+                     reason: str = "") -> dict:
+        """Replace the pending tasks with the approved proposal (PLN-6).
+
+        Guards: the run must not be terminal; every removed task must be
+        pending (never started); user-edited pending tasks stay pinned and
+        are NOT removed; the resulting plan must still validate.
+        """
+        state = self.state(run_id)
+        if state.status in ("succeeded", "cancelled"):
+            raise ValueError(
+                f"Run {run_id} is {state.status}; there is nothing to replan.")
+        kept, remaining = self.replan_target(run_id)
+        pinned = [t for t in remaining if state.tasks.get(t.id) is not None
+                  and state.tasks[t.id].edited]
+        pinned_ids = {t.id for t in pinned}
+        removed = [t.id for t in remaining if t.id not in pinned_ids]
+        kept_tasks = [t for t in state.plan.tasks
+                      if t.id in set(kept) | pinned_ids]
+        from las.shared.plan_contract import Task
+        new_objs = [task_from_obj(t.to_obj()) if hasattr(t, "to_obj") else
+                    task_from_obj(t) for t in new_tasks]
+        # New ids must not collide with kept ones.
+        kept_ids = {t.id for t in kept_tasks}
+        for nt in new_objs:
+            if nt.id in kept_ids:
+                raise ValueError(
+                    f"The proposal reuses task id {nt.id}, which already "
+                    f"exists in the kept part of the plan.")
+        synthetic = Plan(
+            id="replan-probe", title=state.plan.title, goal=state.plan.goal,
+            created_at=state.plan.created_at, options=state.plan.options,
+            constraints=state.plan.constraints,
+            tasks=kept_tasks + new_objs)
+        from las.modules.planquality import validate_plan
+        issues = validate_plan(synthetic)
+        if issues:
+            raise ValueError(
+                "The replan would make the plan invalid: "
+                + "; ".join(str(i) for i in issues))
+        self.store.append(run_id, "plan.replanned", {
+            "removed": removed, "tasks": [t.to_obj() for t in new_objs],
+            "pinned": sorted(pinned_ids), "reason": reason})
+        return {"removed": removed, "pinned": sorted(pinned_ids),
+                "added": [t.id for t in new_objs]}
 
     def edit_task(self, run_id: str, task_id: str, changes: dict,
                   reason: str = "") -> None:
