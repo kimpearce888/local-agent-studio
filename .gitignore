@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Local Agent Studio data (never commit runs, keys or workspaces)
+*.db
+*.db-wal
+*.db-shm
+data/
+runs/
+logs/
+backups/
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
