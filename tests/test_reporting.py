@@ -14,9 +14,9 @@ from contextlib import redirect_stdout
 from datetime import datetime, timezone
 
 from las.modules.reporting import ExportOptions, export_run
-from las.providers import ProviderRegistry
-from las.scheduler import DriverConfig, Engine
-from las.schema.plan import Constraint, Plan, Task
+from las.modules.providers import ProviderRegistry
+from las.modules.execution import DriverConfig, Engine
+from las.shared.plan_contract import Constraint, Plan, Task
 from las.shared.provider_contract import (
     Adapter, CapabilityRecord, StreamEvent, Usage,
 )
@@ -130,7 +130,7 @@ class TestExport(ReportingTestBase):
         # The export command is reporting's contributed CLI command; it works
         # without the mock provider module (its fixtures live in this file).
         run_id, _ = self.successful_run()
-        from las.cli import EXIT_OK, main
+        from las.app.cli import EXIT_OK, main
         out_path = os.path.join(self.tmp.name, "report.md")
         buf = io.StringIO()
         with redirect_stdout(buf):

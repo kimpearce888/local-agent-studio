@@ -9,8 +9,8 @@ import json
 import os
 import unittest
 
-from las.providers.mock import MockAdapter, SimulatedCrash
-from las.scheduler import DriverConfig, Engine
+from las.modules.providers.mock import MockAdapter, SimulatedCrash
+from las.modules.execution import DriverConfig, Engine
 from tests.util import (
     constraint_objs, handoff_text, make_plan, request_json_for, run_with_mock,
     success_turn,
@@ -161,12 +161,12 @@ class TestResume(SchedulerTestBase):
             {"crash": True},                       # dies during t4
             success_turn(plan, "t4"),
         ])
-        from las.providers import ProviderRegistry
+        from las.modules.providers import ProviderRegistry
         engine = Engine(self.data_dir)
         registry = ProviderRegistry()
         registry.register("mock", adapter)
         # A fourth task so the crash lands mid-run.
-        from las.schema.plan import Task
+        from las.shared.plan_contract import Task
         plan.tasks.append(Task(
             id="t4", type="task", title="Polish",
             instructions="Polish the final brief and save it again.",
@@ -211,7 +211,7 @@ class TestResume(SchedulerTestBase):
             success_turn(plan, "t2"),
             success_turn(plan, "t3"),
         ])
-        from las.providers import ProviderRegistry
+        from las.modules.providers import ProviderRegistry
         engine = Engine(self.data_dir)
         registry = ProviderRegistry()
         registry.register("mock", adapter)
@@ -330,7 +330,7 @@ class TestFailurePolicies(SchedulerTestBase):
         plan = make_plan()
         adapter = MockAdapter(self.bad_script(plan) + [
             success_turn(plan, "t1"), success_turn(plan, "t2"), success_turn(plan, "t3")])
-        from las.providers import ProviderRegistry
+        from las.modules.providers import ProviderRegistry
         engine = Engine(self.data_dir)
         registry = ProviderRegistry()
         registry.register("mock", adapter)

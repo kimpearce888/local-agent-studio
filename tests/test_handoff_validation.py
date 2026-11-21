@@ -9,11 +9,11 @@ import hashlib
 import json
 import unittest
 
-from las.schema.handoff import (
+from las.modules.handoffs import (
     EvidenceContext, Handoff, constraint_hash, extract_handoff, normalize_ws,
     validate_handoff,
 )
-from las.schema.plan import Constraint
+from las.shared.plan_contract import Constraint
 from tests.planlib import constraint_objs, handoff_text, make_plan
 
 
@@ -158,7 +158,7 @@ class TestValidation(unittest.TestCase):
 class TestDeliverables(unittest.TestCase):
     def setUp(self):
         import tempfile
-        from las.workspace import Workspace
+        from las.modules.security import Workspace
         self.tmp = tempfile.TemporaryDirectory()
         self.workspace = Workspace(self.tmp.name)
         self.workspace.write_file("out.md", "# Result\n")

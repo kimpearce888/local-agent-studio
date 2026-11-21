@@ -17,5 +17,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[],
     test_files=['tests/test_workspace.py', 'tests/test_tools_broker.py'],
-    compat_shims=['las/tools.py', 'las/workspace.py'],
+    compat_shims=[],
 )

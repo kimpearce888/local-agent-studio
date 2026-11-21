@@ -17,5 +17,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[],
     test_files=['tests/test_plan_validation.py', 'tests/test_linter.py'],
-    compat_shims=['las/linter.py', 'las/schema/plan.py'],
+    compat_shims=[],
 )

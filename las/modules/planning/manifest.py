@@ -19,5 +19,5 @@ MODULE = ModuleManifest(
         CommandSpec("plan", "Generate a plan from a goal"),
     ],
     test_files=['tests/test_planner.py'],
-    compat_shims=['las/planner.py'],
+    compat_shims=[],
 )

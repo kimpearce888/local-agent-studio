@@ -17,5 +17,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[],
     test_files=['tests/test_store_events.py'],
-    compat_shims=['las/store.py'],
+    compat_shims=[],
 )

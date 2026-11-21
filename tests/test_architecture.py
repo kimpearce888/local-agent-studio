@@ -40,17 +40,12 @@ LAS = os.path.join(REPO, "las")
 # Only the test suite still uses legacy paths (via the shims) until S7.
 LEGACY_ALLOWED_IN_MODULES: set[str] = set()
 
-# Pure re-export shims: files that exist only to keep old import paths
-# alive. They may import canonical targets only, and nothing else.
-PURE_SHIMS = {
-    "las/messages.py", "las/export.py", "las/selftest.py", "las/planner.py",
-    "las/linter.py", "las/context.py", "las/tools.py", "las/workspace.py",
-    "las/store.py", "las/scheduler.py", "las/runstate.py", "las/cli.py",
-    "las/schema/__init__.py", "las/schema/plan.py", "las/schema/handoff.py",
-    "las/providers/__init__.py", "las/providers/base.py", "las/providers/mock.py",
-    "las/providers/openai_compat.py", "las/providers/presets.py",
-    "las/providers/probe.py",
-}
+# S7 removed every legacy re-export shim. R8 is now the structural
+# invariant: outside the canonical zones (root package files, las/app,
+# las/shared, las/modules) no Python file may exist under las/.
+CANONICAL_ROOT_FILES = {"las/__init__.py", "las/__main__.py"}
+CANONICAL_PREFIXES = ("las/app/", "las/shared/", "las/modules/")
+PURE_SHIMS: set[str] = set()   # no shims remain
 
 # Manifest dependency edges banned outright (DEPENDENCY_RULES section 4).
 FORBIDDEN_EDGES = {
@@ -77,8 +72,6 @@ def classify(path: str, root: str = REPO) -> str:
                                                           mod, bits[1])):
             return f"module:{mod}.{bits[1]}"
         return f"module:{mod}"
-    if r in PURE_SHIMS:
-        return "shim"
     if r.startswith("las/app/") or r in ("las/cli.py", "las/__init__.py",
                                          "las/__main__.py"):
         return "host"
@@ -140,13 +133,7 @@ def check_file(path: str, contracts: dict[str, str] | None = None,
                 f"R1 kernel purity: {rel(path, root)}:{lineno} imports {module}; "
                 f"the shared kernel imports nothing internal")
             continue
-        # R8 shim purity: only canonical re-exports
-        if kind == "shim" and not (module.startswith("las.shared")
-                                   or module.startswith("las.modules")):
-            violations.append(
-                f"R8 shim purity: {rel(path, root)}:{lineno} imports {module}; a shim "
-                f"may only re-export las.shared or las.modules targets")
-            continue
+
         if kind == "legacy":
             continue  # pre-S4 code, governed by the suite; moves in S4
         # From here: host and module files.
@@ -306,8 +293,27 @@ def check_cycles() -> list[str]:
     return []
 
 
+def check_legacy_files(root: str = LAS) -> list[str]:
+    """R8 (post-S7): no Python files outside the canonical zones."""
+    violations = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in filenames:
+            if not name.endswith(".py"):
+                continue
+            # Paths are repo-relative so the canonical-zone table lines
+            # up with the rest of the checker.
+            r = rel(os.path.join(dirpath, name), REPO).replace(os.sep, "/")
+            if r in CANONICAL_ROOT_FILES or r.startswith(CANONICAL_PREFIXES):
+                continue
+            violations.append(
+                f"R8 legacy file: {r} is outside the canonical zones; legacy "
+                f"shims were removed in S7")
+    return violations
+
+
 def check_all(root: str = LAS) -> list[str]:
-    violations: list[str] = []
+    violations: list[str] = check_legacy_files(root)
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d != "__pycache__"]
         for name in sorted(filenames):
@@ -363,7 +369,7 @@ class TestRuleMutations(unittest.TestCase):
 
     def test_r1_kernel_purity_fires(self):
         self._check({
-            "las/shared/bad.py": "import las.store\n",
+            "las/shared/bad.py": "import las.modules.storage\n",
         }, "R1")
 
     def test_r2_host_never_a_dependency_fires(self):
@@ -388,12 +394,9 @@ class TestRuleMutations(unittest.TestCase):
             "las/modules/c/__init__.py": "import las.modules.a\n",
         }, "R5")
 
-    def test_r8_shim_purity_fires(self):
-        root = self._write({"las/providers/base.py":
-                            "from las.scheduler import Engine\n"})
-        contracts = {"las.modules.a": "a"}
-        violations = check_file(os.path.join(root, "las/providers/base.py"),
-                                contracts=contracts, deps={}, root=root)
+    def test_r8_legacy_file_fires(self):
+        root = self._write({"las/providers/base.py": "x = 1\n"})
+        violations = check_legacy_files(root)
         self.assertTrue(any("R8" in v for v in violations), violations)
 
     def test_transition_unknown_legacy_path_fires(self):

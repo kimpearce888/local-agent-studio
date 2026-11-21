@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from las.schema.plan import Constraint, Plan, Task
+from las.shared.plan_contract import Constraint, Plan, Task
 
 GOAL = (
     "Produce a short market brief about electric bikes for a small retailer. "

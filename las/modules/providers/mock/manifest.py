@@ -21,5 +21,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[],
     test_files=[],
-    compat_shims=["las/providers/mock.py"],
+    compat_shims=[],
 )

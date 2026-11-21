@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
-from las.cli import EXIT_OK, EXIT_RUN_FAILED, main
+from las.app.cli import EXIT_OK, EXIT_RUN_FAILED, main
 from las.modules.selftest import (
     SELFTEST_TOKEN_CAP, SELFTEST_WALL_MINUTES, run_selftest, selftest_plan,
 )
@@ -39,7 +39,7 @@ class TestSelftestPlan(SelftestTestBase):
         self.assertEqual(len(plan.tasks), 3)
         self.assertGreaterEqual(len(plan.constraints), 2)
         # The self-test itself must satisfy plan validation.
-        from las.schema.plan import validate_plan
+        from las.modules.planquality import validate_plan
         self.assertEqual(validate_plan(plan), [])
 
     def test_hard_caps_are_spec_defaults(self):

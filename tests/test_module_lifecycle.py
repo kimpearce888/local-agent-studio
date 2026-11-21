@@ -11,8 +11,8 @@ from contextlib import redirect_stdout
 
 from las.app.capabilities import set_enabled
 from las.app.registry import ModuleRegistry
-from las.cli import EXIT_INVALID, EXIT_OK, main
-from las.store import Store
+from las.app.cli import EXIT_INVALID, EXIT_OK, main
+from las.modules.storage import Store
 from tests.planlib import constraint_objs, handoff_text, make_plan
 
 

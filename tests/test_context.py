@@ -2,12 +2,12 @@
 
 import unittest
 
-from las.context import (
+from las.modules.context import (
     WORKER_PROTOCOL, assemble_context, estimate_tokens, parse_text_tool_call,
 )
-from las.schema.handoff import Handoff, KeyFact
-from las.tools import PermissionBroker
-from las.workspace import Workspace
+from las.modules.handoffs import Handoff, KeyFact
+from las.modules.security import PermissionBroker
+from las.modules.security import Workspace
 from tests.planlib import make_plan
 import tempfile
 

@@ -7,7 +7,7 @@ import unittest
 from contextlib import redirect_stdout
 from unittest import mock
 
-from las.cli import (
+from las.app.cli import (
     EXIT_CANCELLED, EXIT_CAP, EXIT_GATE, EXIT_INVALID, EXIT_OK, EXIT_PROVIDER,
     EXIT_RUN_FAILED, main,
 )

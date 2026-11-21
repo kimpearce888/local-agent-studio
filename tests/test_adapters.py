@@ -10,8 +10,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from las.providers.base import ChatRequest, Message, ProviderError, ToolDef
-from las.providers.openai_compat import (
+from las.shared.provider_contract import ChatRequest, Message, ProviderError, ToolDef
+from las.modules.providers import (
     ChatCompletionsAdapter, ResponsesAdapter, resolve_api_key,
 )
 

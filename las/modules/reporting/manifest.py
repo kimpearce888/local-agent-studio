@@ -20,5 +20,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[CommandSpec("export", "Export a run as a Markdown report or JSON bundle")],
     test_files=["tests/test_reporting.py"],
-    compat_shims=["las/export.py"],
+    compat_shims=[],
 )

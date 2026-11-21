@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from typing import Optional
 
-from las.providers import ProviderRegistry
-from las.providers.mock import MockAdapter
-from las.scheduler import DriverConfig, Engine, RunDriver
+from las.modules.providers import ProviderRegistry
+from las.modules.providers.mock import MockAdapter
+from las.modules.execution import DriverConfig, Engine, RunDriver
 from tests.planlib import (  # noqa: F401 - shared helpers
     constraint_objs, handoff_text, make_plan, request_json_for,
 )

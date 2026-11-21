@@ -3,7 +3,7 @@
 import os
 import unittest
 
-from las.workspace import Workspace, WorkspaceError
+from las.modules.security import Workspace, WorkspaceError
 
 
 class WorkspaceTestBase(unittest.TestCase):

@@ -2,11 +2,11 @@
 
 import unittest
 
-from las.schema.plan import (
+from las.modules.planquality import validate_plan
+from las.shared.plan_contract import (
     Plan, PlanFormatError, Task, Constraint, plan_variables, substitute_variables,
-    validate_plan,
 )
-from las.tools import KNOWN_TOOLS
+from las.modules.security import KNOWN_TOOLS
 
 
 def base_plan() -> Plan:

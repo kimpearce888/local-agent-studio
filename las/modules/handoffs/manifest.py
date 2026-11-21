@@ -17,5 +17,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[],
     test_files=['tests/test_handoff_validation.py'],
-    compat_shims=['las/schema/handoff.py', 'las/schema/__init__.py'],
+    compat_shims=[],
 )

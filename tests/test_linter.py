@@ -2,8 +2,8 @@
 
 import unittest
 
-from las.linter import lint, errors as lint_errors
-from las.schema.plan import Task
+from las.modules.planquality import lint, errors as lint_errors
+from las.shared.plan_contract import Task
 from tests.planlib import make_plan
 
 

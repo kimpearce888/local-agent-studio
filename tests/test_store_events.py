@@ -3,7 +3,7 @@
 import sqlite3
 import unittest
 
-from las.store import DBNewerError, Store, ProviderProfile, canonical_json
+from las.modules.storage import DBNewerError, Store, ProviderProfile, canonical_json
 
 
 class StoreTestBase(unittest.TestCase):

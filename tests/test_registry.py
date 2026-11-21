@@ -78,7 +78,7 @@ class TestDiscovery(unittest.TestCase):
                           f"MODULE_MAP.md must list registered module {mid}")
 
     def test_cli_registers_enabled_module_commands(self):
-        from las.cli import build_parser
+        from las.app.cli import build_parser
         parser = build_parser()
         subchoices = set()
         for action in parser._actions:  # noqa: SLF001 - introspection is the point

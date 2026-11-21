@@ -171,9 +171,23 @@ appear in the canonical zone.
   export, polling). Removal tests: reporting/providers.mock/selftest all
   PASSED after the api module landed (api holds no shim baggage).
 
+## S7 — Shim removal (complete)
+
+- All 21 legacy re-export shims deleted (las/*.py, las/providers/,
+  las/schema/); every test import rewritten to canonical paths with the
+  S4 mapping (18 files); validate_plan imports point at planquality.
+- compat_shims emptied in every manifest; the DEPENDENCY_RULES transition
+  exception row is removed (its review condition was "S7 removes it").
+- R8 became the structural post-S7 invariant: no Python file under las/
+  outside the canonical zones (root package files, las/app, las/shared,
+  las/modules) — mutation-tested like every other rule.
+- Sandbox note: a recycle flipped file modes across the tree; neutralized
+  with core.fileMode=false (content untouched).
+- Verification: full suite PASSED (230 tests); removal tests PASSED for
+  reporting, providers.mock, selftest; `python -m las selftest` PASSED.
+
 ## Remaining work (honest list)
 
-- S7 shim removal + canonical test imports (mechanical).
 - S5b CLI command split (context-object redesign).
 - M1 items not feasible in this sandbox: nightly contract tests against
   real servers (no LM Studio/Ollama available); the 100-goal benchmark

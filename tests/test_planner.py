@@ -2,12 +2,12 @@
 
 import unittest
 
-from las.planner import (
+from las.modules.planning import (
     Planner, extract_constraint_candidates, find_source_span,
 )
-from las.providers.mock import MockAdapter
-from las.schema.plan import validate_plan
-from las.tools import KNOWN_TOOLS
+from las.modules.providers.mock import MockAdapter
+from las.modules.planquality import validate_plan
+from las.modules.security import KNOWN_TOOLS
 from tests.planlib import make_plan
 
 GOAL = ("Write a market brief about e-bikes. You must cite every figure. "

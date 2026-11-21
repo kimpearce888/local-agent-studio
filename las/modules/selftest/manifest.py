@@ -19,5 +19,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[CommandSpec("selftest", "Run the built-in self-test against a provider")],
     test_files=["tests/test_selftest.py"],
-    compat_shims=["las/selftest.py"],
+    compat_shims=[],
 )

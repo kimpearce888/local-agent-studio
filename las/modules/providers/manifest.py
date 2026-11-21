@@ -20,11 +20,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[CommandSpec("providers", "Manage and test provider profiles")],
     test_files=["tests/test_adapters.py"],
-    compat_shims=[
-        "las/providers/__init__.py",
-        "las/providers/base.py",
-        "las/providers/openai_compat.py",
-        "las/providers/presets.py",
-        "las/providers/probe.py",
-    ],
+    compat_shims=[],
 )

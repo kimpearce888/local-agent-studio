@@ -17,5 +17,5 @@ MODULE = ModuleManifest(
     default_enabled=True,
     commands=[],
     test_files=['tests/test_context.py'],
-    compat_shims=['las/context.py'],
+    compat_shims=[],
 )

@@ -28,5 +28,5 @@ MODULE = ModuleManifest(
         CommandSpec("verify", "Verify a run's event hash chain"),
     ],
     test_files=['tests/test_scheduler.py'],
-    compat_shims=['las/scheduler.py', 'las/runstate.py'],
+    compat_shims=[],
 )

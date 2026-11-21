@@ -2,11 +2,11 @@
 
 import unittest
 
-from las.schema.plan import Task
-from las.tools import PermissionBroker, TOOL_FLAGS
+from las.shared.plan_contract import Task
+from las.modules.security import PermissionBroker, TOOL_FLAGS
 from tests.planlib import make_plan
 import tempfile
-from las.workspace import Workspace
+from las.modules.security import Workspace
 
 
 class TestFlags(unittest.TestCase):
@@ -132,7 +132,7 @@ class TestBrokerDecisions(unittest.TestCase):
 
 class TestToolFlagsTable(unittest.TestCase):
     def test_every_known_tool_has_flags(self):
-        from las.tools import KNOWN_TOOLS
+        from las.modules.security import KNOWN_TOOLS
         for tool in KNOWN_TOOLS:
             self.assertIn(tool, TOOL_FLAGS)
 
