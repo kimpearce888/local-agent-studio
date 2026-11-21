@@ -54,6 +54,7 @@ class _RunCoordinator:
                 with self.lock:
                     self.active.pop(run_id, None)
                 self._completion_hook(engine, run_id)
+                self._maybe_telemetry(engine, run_id)
 
         thread = threading.Thread(target=work, daemon=True, name=f"run-{run_id}")
         thread.start()
@@ -74,6 +75,16 @@ class _RunCoordinator:
             return str(engine.store.get_setting("runs.completion_hook", "") or "")
         except Exception:  # noqa: BLE001 - settings must never break a run
             return ""
+
+    @staticmethod
+    def _maybe_telemetry(engine, run_id):
+        """OBS-5: optional OTLP export, off unless configured."""
+        try:
+            from las.app.registry import ModuleRegistry
+            telemetry = ModuleRegistry().load("telemetry", engine.store.get_setting)
+            telemetry.maybe_export(engine.store, run_id)
+        except Exception:  # noqa: BLE001 - telemetry must never fail a run
+            pass
 
     def _completion_hook(self, engine, run_id):
         """API-2: a local hook on run completion. The command configured in

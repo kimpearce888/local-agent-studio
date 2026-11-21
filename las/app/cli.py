@@ -260,6 +260,13 @@ def _drive(engine: Engine, store: Store, run_id: str, registry: ProviderRegistry
         print("Run cancelled.")
         return EXIT_CANCELLED
 
+    # Optional OTLP export (OBS-5): off unless configured; never fails the run.
+    try:
+        telemetry_mod = ModuleRegistry().load("telemetry", store.get_setting)
+        telemetry_mod.maybe_export(store, run_id)
+    except Exception:  # noqa: BLE001 - module disabled or unset
+        pass
+
     exit_code = EXIT_OK
     for r in results:
         if args.json_out:
@@ -755,6 +762,22 @@ def cmd_delete(args) -> int:
     return EXIT_OK
 
 
+def cmd_compare(args) -> int:
+    """Compare two runs: plan diff and output diff (OBS-6)."""
+    store = Store(args.data_dir)
+    reporting = ModuleRegistry().load("reporting", store.get_setting)
+    for run_id in (args.run_a, args.run_b):
+        if run_id not in store.run_ids():
+            print(f"No run {run_id}.")
+            return EXIT_INVALID
+    diff = reporting.compare_runs(store, args.run_a, args.run_b)
+    if args.json_out:
+        _print_json(diff)
+        return EXIT_OK
+    print(reporting.render_compare(diff))
+    return EXIT_OK
+
+
 def cmd_edit(args) -> int:
     """Edit a pending task (RUN-6): instructions, title, model override."""
     engine = Engine(args.data_dir)
@@ -998,6 +1021,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm", action="store_true",
                    help="required; deletion is permanent")
     p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("compare", parents=[common],
+                       help="Compare two runs (OBS-6)")
+    p.add_argument("run_a")
+    p.add_argument("run_b")
+    p.add_argument("--json", dest="json_out", action="store_true")
+    p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("edit", parents=[common],
                        help="Edit a pending task of a run (RUN-6)")
