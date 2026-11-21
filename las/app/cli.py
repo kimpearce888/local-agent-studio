@@ -151,6 +151,11 @@ def cmd_plan(args) -> int:
     result = planner.plan(args.goal, {
         "granularity": args.granularity, "max_tasks": args.max_tasks},
         attachments_block=attachments_block)
+    if imported_attachments and (result.error or result.plan is None):
+        # Planning failed: remove the staged files so nothing lingers.
+        import os as __os, shutil as __shutil
+        __shutil.rmtree(__os.path.join(args.data_dir, "attachments",
+                                       "_incoming"), ignore_errors=True)
     if imported_attachments and result.plan is not None:
         import os as _os, shutil as _shutil
         src_dir = _os.path.join(args.data_dir, "attachments", "_incoming")
