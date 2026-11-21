@@ -124,6 +124,13 @@ PASSED / FAILED / BLOCKED / SKIPPED / NOT RUN — never inflated.
   disproportionate to the remaining benefit. The host CLI stays the
   composition root; documented as a size-fitness exception in
   tests/test_architecture.py with the M2 milestone as the review point.
+  RESOLVED in continuation session 4: the context-object redesign landed as
+  las/app/commands/ (common.py holds the shared import surface, helpers and
+  exit codes; six domain modules carry the handler bodies moved VERBATIM;
+  cli.py is a 279-line composition root of parser + dispatch +
+  backward-compat re-exports). All 281 tests pass unchanged, the
+  architecture rules pass, and the module-owned-file variant stays
+  rejected.
 - Verification: 221 tests PASSED, all three removal tests PASSED,
   `python -m las selftest` PASSED.
 
@@ -273,15 +280,18 @@ telemetry and attachments (planning correctly refuses removal as core);
 
 ## Remaining work (honest list)
 
-- S5b CLI command split (context-object redesign).
 - M1 items not feasible in this sandbox: nightly contract tests against
   real servers (no LM Studio/Ollama available); the 100-goal benchmark
   (needs a real model); derived SQL tables optimization.
 - M2 desktop shell: BLOCKED in this environment (no Rust toolchain); the
   engine API it will consume is in place and tested.
-- M3/M4 features (MCP client, attachments, signed installers, OTLP export,
-  run comparison, replanning UI) — not started; P1 tools run_command and
-  web_fetch already exist with allowlists from M0.
+- M3/M4 items still open: MCP client (TLS-6), signed installers (DST-1)
+  and the replanning UI surface; attachments, OTLP export, run comparison
+  and re-planning itself are DONE engine-side (session 3). P1 tools
+  run_command and web_fetch already exist with allowlists from M0; their
+  detailed behavior, like RUN-10/RUN-11, is specified at the start of the
+  phases that deliver them (spec line 644) and is deliberately not
+  invented here.
 
 ## Handover notes (maintained continuously)
 
