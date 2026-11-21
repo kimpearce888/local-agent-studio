@@ -22,6 +22,7 @@
 | library | host | Templates (LIB-1) and role profiles (LIB-2), spec S10 | `las.modules.library` (`save_template`, `builtin_templates`, `save_role_profile`) | templates + role_profiles tables | planquality, storage | none | `las/modules/library/` (implemented) | `python -m unittest tests.test_library` |
 | diagnostics | host | Redacted local diagnostics bundle (OBS-7, S13) | `las.modules.diagnostics` (`build_diagnostics`, `text_meta`) | none | execution, storage | none | `las/modules/diagnostics/` (implemented) | `python -m unittest tests.test_diagnostics` |
 | telemetry | host | Optional OTLP export with pinned GenAI conventions (OBS-5), off by default | `las.modules.telemetry` (`maybe_export`, `build_spans`) | none (reads settings) | execution, storage | none | `las/modules/telemetry/` (implemented) | `python -m unittest tests.test_telemetry` |
+| attachments | host | Goal attachments: stdlib import, planner manifest with summaries, workspace copy (PLN-7, TLS-8) | `las.modules.attachments` (`import_file`, `manifest_block`, `copy_to_workspace`) | `attachments/<plan_id>/` | storage | none | `las/modules/attachments/` (implemented) | `python -m unittest tests.test_attachments` |
 | app | root | Host: composition root, module registry, capability resolution, CLI adapter | `las/app/` (implemented) | none | all module contracts | none | `las/app/` (implemented) | `python -m unittest tests.test_cli` |
 
 ## Rules

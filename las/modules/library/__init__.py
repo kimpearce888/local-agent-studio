@@ -225,6 +225,18 @@ def save_role_profile(store: Store, profile: dict) -> dict:
         "tools": list(tools),
         "default_model": dict(profile.get("default_model") or {}),
     }
+    # LIB-3: prompt version history. Saving a changed prompt keeps the
+    # previous one as a revision (capped, oldest dropped first).
+    existing = store.get_role_profile(profile["id"])
+    if existing is not None and existing.get("system_prompt") != entry["system_prompt"]:
+        revisions = list(existing.get("revisions") or [])
+        revisions.append({"system_prompt": existing.get("system_prompt", ""),
+                          "superseded_at": __import__("datetime").datetime.now(
+                              __import__("datetime").timezone.utc).strftime(
+                              "%Y-%m-%dT%H:%M:%SZ")})
+        entry["revisions"] = revisions[-20:]
+    elif existing is not None:
+        entry["revisions"] = list(existing.get("revisions") or [])
     store.save_role_profile(entry)
     return entry
 

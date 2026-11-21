@@ -169,9 +169,10 @@ class Planner:
         self.params = params or {"temperature": 0.2, "max_tokens": 4096}
         self.json_schema_supported = json_schema_supported
 
-    def plan(self, goal: str, options: Optional[dict] = None) -> PlanResult:
+    def plan(self, goal: str, options: Optional[dict] = None,
+             attachments_block: str = "") -> PlanResult:
         options = options or {}
-        request = self._request(goal, options)
+        request = self._request(goal, options, attachments_block)
         history: list[Message] = list(request.messages)
         result = PlanResult(plan=None, valid=False)
 
@@ -319,11 +320,15 @@ class Planner:
             return []
         return [item for item in parsed if isinstance(item, dict)][:5]
 
-    def _request(self, goal: str, options: dict) -> ChatRequest:
+    def _request(self, goal: str, options: dict,
+                 attachments_block: str = "") -> ChatRequest:
+        user = _planner_user_message(goal, options)
+        if attachments_block:
+            user = user + "\n\n" + attachments_block
         return ChatRequest(
             model=self.model,
             messages=[Message("system", PLANNER_SYSTEM_PROMPT),
-                      Message("user", _planner_user_message(goal, options))],
+                      Message("user", user)],
             json_schema=PLAN_JSON_SCHEMA if self.json_schema_supported else None,
             params=dict(self.params))
 

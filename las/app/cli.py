@@ -127,8 +127,43 @@ def cmd_plan(args) -> int:
             return EXIT_PROVIDER
         model = models[0]["id"]
     planner = Planner(adapter, model)
+    attachments_block = ""
+    imported_attachments = 0
+    if getattr(args, "attach", None):
+        from las.modules.attachments import (AttachmentError, import_file,
+                                             manifest_block)
+        entries = []
+        for path_arg in args.attach:
+            try:
+                # The plan id is not known before planning; import under a
+                # staging id and re-key the directory afterwards.
+                entries.append(import_file(path_arg, args.data_dir, "_incoming"))
+            except AttachmentError as exc:
+                print(str(exc))
+                return EXIT_INVALID
+        attachments_block = manifest_block(entries)
+        imported_attachments = len(entries)
     result = planner.plan(args.goal, {
-        "granularity": args.granularity, "max_tasks": args.max_tasks})
+        "granularity": args.granularity, "max_tasks": args.max_tasks},
+        attachments_block=attachments_block)
+    if imported_attachments and result.plan is not None:
+        import os as _os, shutil as _shutil
+        src_dir = _os.path.join(args.data_dir, "attachments", "_incoming")
+        dest_dir = _os.path.join(args.data_dir, "attachments", result.plan.id)
+        if _os.path.isdir(src_dir):
+            _shutil.rmtree(dest_dir, ignore_errors=True)
+            _shutil.move(src_dir, dest_dir)
+        print(f"Attached {imported_attachments} file(s) to plan {result.plan.id}.")
+    if not result.error and result.plan is not None:
+        pending = globals().pop("_pending_attachments", [])
+        if pending:
+            import os as _os, shutil as _shutil
+            src_dir = _os.path.join(args.data_dir, "attachments", "_incoming")
+            dest_dir = _os.path.join(args.data_dir, "attachments", result.plan.id)
+            if _os.path.isdir(src_dir):
+                _shutil.rmtree(dest_dir, ignore_errors=True)
+                _shutil.move(src_dir, dest_dir)
+            print(f"Attached {len(pending)} file(s) to plan {result.plan.id}.")
     if result.error:
         msg, fix = message_with_fix(result.error)
         print(f"{result.error}: {msg}\nFix: {fix}")
@@ -217,6 +252,16 @@ def cmd_run(args) -> int:
     engine = Engine(args.data_dir)
     run_id = engine.create_run(plan, cap_tokens=args.cap_tokens,
                                cap_wall_minutes=args.cap_wall_minutes)
+    # PLN-7/TLS-8: the plan's attachments land in the run workspace so
+    # tasks can read them with the jailed file tools.
+    try:
+        from las.modules.attachments import copy_to_workspace
+        copied = copy_to_workspace(args.data_dir, plan.id,
+                                   store.workspace_dir(run_id))
+        if copied:
+            print(f"Attachments in workspace: {', '.join(copied)}")
+    except Exception:  # noqa: BLE001 - optional module, never blocks a run
+        pass
     print(f"Run {run_id} started ({len(plan.tasks)} tasks)")
     return _drive(engine, store, run_id, registry, provider_id, args)
 
@@ -600,7 +645,7 @@ def cmd_selftest(args) -> int:
             print(f"  [{mark}] {step['name']} {step['detail']}")
         print(f"Self-test {'passed' if result.ok else 'failed'} "
               f"({result.tokens_used} tokens, run {result.run_id})")
-        if result.error:
+    if result.error:
             print(f"  reason: {result.error}")
     return EXIT_OK if result.ok else EXIT_RUN_FAILED
 
@@ -937,6 +982,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("goal")
     p.add_argument("-o", "--output", help="write the plan JSON to this path")
     p.add_argument("--granularity", choices=("coarse", "normal", "fine"), default="normal")
+    p.add_argument("--attach", action="append", default=[], metavar="FILE",
+                   help="attach a file to the goal (repeatable; PLN-7)")
     p.add_argument("--max-tasks", type=int, default=30)
     p.add_argument("--provider")
     p.add_argument("--model")
