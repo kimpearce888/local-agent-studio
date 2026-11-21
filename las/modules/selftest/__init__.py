@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from las.providers import ProviderRegistry
-from las.providers.base import Adapter
-from las.schema.plan import Constraint, Plan, Task
-from las.scheduler import DriverConfig, Engine
+from las.modules.providers import ProviderRegistry
+from las.shared.provider_contract import Adapter
+from las.shared.plan_contract import Constraint, Plan, Task
+from las.modules.execution import DriverConfig, Engine
 
 SELFTEST_TOKEN_CAP = 20_000
 SELFTEST_WALL_MINUTES = 5
@@ -131,7 +131,7 @@ def run_selftest(data_dir: str, adapter: Adapter | None = None) -> SelfTestResul
     plan = selftest_plan()
     if adapter is None:
         try:
-            from las.providers.mock import MockAdapter  # optional-dep: providers.mock
+            from las.modules.providers.mock import MockAdapter  # optional-dep: providers.mock
         except ImportError:
             return SelfTestResult(
                 ok=False,

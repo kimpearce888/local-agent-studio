@@ -13,7 +13,7 @@ from las.app.capabilities import set_enabled
 from las.app.registry import ModuleRegistry
 from las.cli import EXIT_INVALID, EXIT_OK, main
 from las.store import Store
-from tests.util import constraint_objs, handoff_text, make_plan
+from tests.planlib import constraint_objs, handoff_text, make_plan
 
 
 def module_installed(module_id: str) -> bool:
@@ -80,6 +80,8 @@ class LifecycleTestBase(unittest.TestCase):
 
 
 @unittest.skipUnless(module_installed("reporting"), "reporting module not installed")
+@unittest.skipUnless(module_installed("providers.mock"),
+                       "fixture uses the providers.mock module")
 class TestDisableReporting(LifecycleTestBase):
     def test_disabled_reporting_blocks_export_with_fix(self):
         rid = self.successful_run()

@@ -8,7 +8,7 @@ from las.planner import (
 from las.providers.mock import MockAdapter
 from las.schema.plan import validate_plan
 from las.tools import KNOWN_TOOLS
-from tests.util import make_plan
+from tests.planlib import make_plan
 
 GOAL = ("Write a market brief about e-bikes. You must cite every figure. "
         "Never invent numbers. The report requires approval before publishing.")

@@ -11,7 +11,7 @@ from las.cli import (
     EXIT_CANCELLED, EXIT_CAP, EXIT_GATE, EXIT_INVALID, EXIT_OK, EXIT_PROVIDER,
     EXIT_RUN_FAILED, main,
 )
-from tests.util import constraint_objs, handoff_text, make_plan
+from tests.planlib import constraint_objs, handoff_text, make_plan
 
 
 class CliTestBase(unittest.TestCase):
@@ -63,6 +63,16 @@ class TestProviders(CliTestBase):
         self.assertEqual(code, EXIT_OK)
 
 
+def _mock_available() -> bool:
+    try:
+        from las.app.registry import ModuleRegistry
+        ModuleRegistry().get("providers.mock")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+@unittest.skipUnless(_mock_available(), "fixture uses the providers.mock module")
 class TestInspection(CliTestBase):
     def _successful_run_id(self) -> str:
         code, _ = self.run_cli("providers", "add", "--name", "m", "--preset", "mock")
@@ -95,6 +105,7 @@ class TestInspection(CliTestBase):
         self.assertIn("verified", out)
 
 
+@unittest.skipUnless(_mock_available(), "fixture uses the providers.mock module")
 class TestRun(CliTestBase):
     def setUp(self):
         super().setUp()
@@ -183,6 +194,7 @@ class TestRun(CliTestBase):
         self.assertEqual(code, EXIT_OK, out)
 
 
+@unittest.skipUnless(_mock_available(), "fixture uses the providers.mock module")
 class TestPlanCommand(CliTestBase):
     def test_plan_with_mock_provider(self):
         code, _ = self.run_cli("providers", "add", "--name", "m", "--preset", "mock")

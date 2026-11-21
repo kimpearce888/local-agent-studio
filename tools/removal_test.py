@@ -27,14 +27,27 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IGNORE = shutil.ignore_patterns("__pycache__", ".git", "*.pyc", ".venv", "dist")
 
 
+def manifest_files_of(text: str) -> list[str]:
+    """Test files declared in a manifest source text."""
+    import re
+    m = re.search(r"test_files=\[(.*?)\]", text, re.DOTALL)
+    if not m:
+        return []
+    return re.findall(r'["\']([^"\']+)["\']', m.group(1))
+
+
 def importers_in_copy(copy: str, needles: list[str], roots=("las", "tests"),
                       optional_marker: str = "") -> list[str]:
-    """Files under roots (relative) that reference any needle string.
+    """Files under roots (relative) whose *imports* reference a needle.
 
-    Lines tagged with ``optional_marker`` (``# optional-dep: MODULE_ID``)
-    are skipped: they are the documented graceful-degradation sites that
-    handle the module's absence by design.
+    Test files are matched on actual import statements (AST), so merely
+    mentioning a path string (for example the checker's own shim table)
+    does not count as a dependency. Files under ``las/`` are matched on
+    any textual reference, skipping lines tagged with ``optional_marker``
+    (``# optional-dep: MODULE_ID``), the documented graceful-degradation
+    sites.
     """
+    import ast as _ast
     affected: list[str] = []
     for root in roots:
         for dirpath, dirnames, filenames in os.walk(os.path.join(copy, root)):
@@ -43,17 +56,30 @@ def importers_in_copy(copy: str, needles: list[str], roots=("las", "tests"),
                 if not name.endswith(".py"):
                     continue
                 path = os.path.join(dirpath, name)
-                with open(path, encoding="utf-8") as fh:
-                    lines = fh.readlines()
-                hit = False
-                for line in lines:
-                    if optional_marker and optional_marker in line:
-                        continue
-                    if any(needle in line for needle in needles):
-                        hit = True
-                        break
-                if hit:
-                    affected.append(os.path.relpath(path, copy))
+                if root == "tests":
+                    with open(path, encoding="utf-8") as fh:
+                        tree = _ast.parse(fh.read(), filename=path)
+                    modules = []
+                    for node in _ast.walk(tree):
+                        if isinstance(node, _ast.Import):
+                            modules.extend(a.name for a in node.names)
+                        elif isinstance(node, _ast.ImportFrom) and node.module and not node.level:
+                            modules.append(node.module)
+                    if any(m == n or m.startswith(n + ".")
+                           for m in modules for n in needles):
+                        affected.append(os.path.relpath(path, copy))
+                else:
+                    with open(path, encoding="utf-8") as fh:
+                        lines = fh.readlines()
+                    hit = False
+                    for line in lines:
+                        if optional_marker and optional_marker in line:
+                            continue
+                        if any(needle in line for needle in needles):
+                            hit = True
+                            break
+                    if hit:
+                        affected.append(os.path.relpath(path, copy))
     return affected
 
 
@@ -111,6 +137,25 @@ def main() -> int:
                 deleted_tests.add(rel)                                 # tests/util.py
                 deleted_tests.add(rel[:-3].replace("/", "."))          # tests.util
                 print(f"removed {rel} (imports the removed module or a deleted test file)")
+
+        # 3b. Surviving manifests drop test_files entries whose files were
+        # removed with a fixture module (a build without that module ships
+        # without those integration tests, and the manifest says so).
+        for mdir in [d for d in os.listdir(os.path.join(copy, "las", "modules"))
+                     if os.path.isdir(os.path.join(copy, "las", "modules", d))]:
+            mpath = os.path.join(copy, "las", "modules", mdir, "manifest.py")
+            if not os.path.exists(mpath):
+                continue
+            with open(mpath, encoding="utf-8") as fh:
+                mtext = fh.read()
+            for tf in manifest_files_of(mtext):
+                if not os.path.exists(os.path.join(copy, tf)):
+                    for q in ('"', "'"):
+                        mtext = mtext.replace(f"{q}{tf}{q}, ", "").replace(f"{q}{tf}{q}", "")
+                    print(f"adjusted {mdir} manifest: dropped test file {tf} "
+                          f"(removed with a fixture module)")
+                    with open(mpath, "w", encoding="utf-8") as fh:
+                        fh.write(mtext)
 
         # 4. Registry must still discover and validate cleanly.
         proc = subprocess.run(

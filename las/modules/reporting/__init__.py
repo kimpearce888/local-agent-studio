@@ -10,7 +10,7 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from las.runstate import RunState
+from las.modules.execution import RunState
 
 AI_NOTICE = ("This document was generated with the assistance of AI (Local Agent "
              "Studio). Verify important details before use.")

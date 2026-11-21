@@ -4,7 +4,7 @@ import unittest
 
 from las.linter import lint, errors as lint_errors
 from las.schema.plan import Task
-from tests.util import make_plan
+from tests.planlib import make_plan
 
 
 class TestLint(unittest.TestCase):

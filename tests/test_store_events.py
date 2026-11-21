@@ -76,7 +76,7 @@ class TestStoreData(StoreTestBase):
         self.assertIsNone(self.store.get_provider("lm"))
 
     def test_plan_roundtrip(self):
-        from tests.util import make_plan
+        from tests.planlib import make_plan
         plan = make_plan()
         self.store.save_plan(plan.to_obj())
         obj = self.store.get_plan(plan.id)

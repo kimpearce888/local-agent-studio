@@ -14,7 +14,7 @@ from las.schema.handoff import (
     validate_handoff,
 )
 from las.schema.plan import Constraint
-from tests.util import constraint_objs, handoff_text, make_plan
+from tests.planlib import constraint_objs, handoff_text, make_plan
 
 
 class TestExtraction(unittest.TestCase):

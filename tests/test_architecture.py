@@ -34,22 +34,19 @@ import unittest
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAS = os.path.join(REPO, "las")
 
-# Documented transition exception — every entry is a pre-migration package
-# that still holds implementation or a declared shim (see manifests'
-# compat_shims). S7 empties this set.
-LEGACY_ALLOWED_IN_MODULES = {
-    "las.providers", "las.providers.base", "las.providers.mock",
-    "las.providers.openai_compat", "las.providers.presets", "las.providers.probe",
-    "las.store", "las.schema", "las.schema.plan", "las.schema.handoff",
-    "las.scheduler", "las.runstate", "las.context", "las.tools", "las.workspace",
-    "las.planner", "las.linter", "las.messages", "las.export", "las.selftest",
-    "las.cli", "las",
-}
+# Documented transition exception (DEPENDENCY_RULES section 6). S4 rewrote
+# every import inside las/modules and las/app to canonical paths, so this
+# set is now EMPTY: legacy imports in the canonical zone are violations.
+# Only the test suite still uses legacy paths (via the shims) until S7.
+LEGACY_ALLOWED_IN_MODULES: set[str] = set()
 
 # Pure re-export shims: files that exist only to keep old import paths
 # alive. They may import canonical targets only, and nothing else.
 PURE_SHIMS = {
-    "las/messages.py", "las/export.py", "las/selftest.py",
+    "las/messages.py", "las/export.py", "las/selftest.py", "las/planner.py",
+    "las/linter.py", "las/context.py", "las/tools.py", "las/workspace.py",
+    "las/store.py", "las/scheduler.py", "las/runstate.py", "las/cli.py",
+    "las/schema/__init__.py", "las/schema/plan.py", "las/schema/handoff.py",
     "las/providers/__init__.py", "las/providers/base.py", "las/providers/mock.py",
     "las/providers/openai_compat.py", "las/providers/presets.py",
     "las/providers/probe.py",
@@ -201,6 +198,10 @@ def check_file(path: str, contracts: dict[str, str] | None = None,
                     violations.append(
                         f"R4 private name: {rel(path, root)}:{lineno} imports "
                         f"{name!r} from {module}")
+        # The root package exposes only distribution metadata (APP_NAME,
+        # __version__) and is always importable.
+        if module == "las":
+            continue
         # Legacy transition exception for module files
         if kind.startswith("module:") and not module.startswith(("las.shared",
                                                                  "las.modules")):
@@ -329,11 +330,10 @@ class TestArchitectureRules(unittest.TestCase):
         self.assertEqual(violations, [],
                          "architecture violations:\n  " + "\n  ".join(violations))
 
-    def test_legacy_exception_list_is_documented(self):
-        # The transition exception must name the pre-migration packages
-        # exactly; S7 replaces this test with an empty-set assertion.
-        self.assertIn("las.store", LEGACY_ALLOWED_IN_MODULES)
-        self.assertTrue(all(x.startswith("las") for x in LEGACY_ALLOWED_IN_MODULES))
+    def test_legacy_exception_list_is_empty(self):
+        # S4 rewrote every canonical-zone import; from here until S7 no
+        # legacy import path may appear inside las/modules or las/app.
+        self.assertEqual(LEGACY_ALLOWED_IN_MODULES, set())
 
 
 class TestRuleMutations(unittest.TestCase):

@@ -79,6 +79,35 @@ PASSED / FAILED / BLOCKED / SKIPPED / NOT RUN — never inflated.
   Removal tests — PASSED for `reporting`, `providers.mock`, `selftest`
   (disposable copies; working tree untouched).
 
+## S4 — Mechanical migration of the remaining modules (ADR-0004)
+
+- Moved into `las/modules/`: planning, planquality (validation + linting),
+  handoffs, execution (scheduler + runstate), context, security (tools +
+  workspace), storage; the CLI moved to `las/app/cli.py`. Entry point is now
+  `studio = las.app.cli:main`. Nine new manifests with declared dependencies
+  (validated acyclic by the registry test); pilot manifests updated to their
+  real dependencies (reporting→execution, selftest→execution+providers).
+- Shared kernel gained `tool_catalog.py` (tool definitions and Rule-of-Two
+  flags as a contract used by planning, planquality and security).
+- Import rewrites: every file under `las/modules` and `las/app` is fully
+  canonical; the architecture checker's legacy exception list is now EMPTY
+  (R1-R8 fully enforced in the canonical zone). Legacy paths survive only as
+  pure re-export shims (declared per manifest in `compat_shims`) for the
+  untouched test suite.
+- Test infrastructure decoupling forced by the removal tests (documented
+  deviation from "zero test edits" at S4: imports only, no assertions):
+  `tests/planlib.py` (mock-free helpers) split from `tests/util.py`
+  (mock-driven engine harness); mock-fixture test classes carry explicit
+  `skipUnless` so any mock-less build stays green; reporting and selftest
+  own their test files. The harness now matches test dependencies by AST
+  imports (not text), handles transitive fixture deletion, and adjusts
+  surviving manifests when fixture-coupled test files go (what a mock-less
+  build would ship).
+- Verification: `python3 -m unittest discover -s tests` — PASSED (236
+  tests, zero assertion changes); removal tests — PASSED for `reporting`,
+  `providers.mock`, `selftest` (working tree untouched); `python3 -m las
+  selftest` against the mock — PASSED end to end.
+
 ## Handover notes (maintained continuously)
 
 - To run everything: `python3 -m unittest discover -s tests`;

@@ -8,7 +8,7 @@ from las.context import (
 from las.schema.handoff import Handoff, KeyFact
 from las.tools import PermissionBroker
 from las.workspace import Workspace
-from tests.util import make_plan
+from tests.planlib import make_plan
 import tempfile
 
 

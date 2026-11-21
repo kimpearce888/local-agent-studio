@@ -15,7 +15,7 @@ def base_plan() -> Plan:
 
 
 def make_valid() -> Plan:
-    from tests.util import make_plan
+    from tests.planlib import make_plan
     return make_plan()
 
 

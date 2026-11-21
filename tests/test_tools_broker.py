@@ -4,7 +4,7 @@ import unittest
 
 from las.schema.plan import Task
 from las.tools import PermissionBroker, TOOL_FLAGS
-from tests.util import make_plan
+from tests.planlib import make_plan
 import tempfile
 from las.workspace import Workspace
 
