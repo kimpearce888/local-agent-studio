@@ -21,6 +21,7 @@
 | api | host | Loopback engine HTTP API: token auth, origin check, runs/events/controls (spec 7.5) | `las.modules.api` (`serve`, `serve()`) | none | shared, execution, planning, providers, storage | reporting (export endpoint) | `las/modules/api/` (implemented) | `python -m unittest tests.test_api` |
 | library | host | Templates (LIB-1) and role profiles (LIB-2), spec S10 | `las.modules.library` (`save_template`, `builtin_templates`, `save_role_profile`) | templates + role_profiles tables | planquality, storage | none | `las/modules/library/` (implemented) | `python -m unittest tests.test_library` |
 | diagnostics | host | Redacted local diagnostics bundle (OBS-7, S13) | `las.modules.diagnostics` (`build_diagnostics`, `text_meta`) | none | execution, storage | none | `las/modules/diagnostics/` (implemented) | `python -m unittest tests.test_diagnostics` |
+| telemetry | host | Optional OTLP export with pinned GenAI conventions (OBS-5), off by default | `las.modules.telemetry` (`maybe_export`, `build_spans`) | none (reads settings) | execution, storage | none | `las/modules/telemetry/` (implemented) | `python -m unittest tests.test_telemetry` |
 | app | root | Host: composition root, module registry, capability resolution, CLI adapter | `las/app/` (implemented) | none | all module contracts | none | `las/app/` (implemented) | `python -m unittest tests.test_cli` |
 
 ## Rules
