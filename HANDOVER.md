@@ -11,7 +11,16 @@
   including model lifecycle endpoints (PRV-8).
 - P0 features delivered: templates + role profiles (`studio templates`,
   `studio roles`), diagnostics bundle (`studio diagnostics`), data
-  retention/delete (`studio data`), model lifecycle (`studio models`).
+  retention/delete (`studio data`, `studio delete`), model lifecycle
+  (`studio models`).
+- Requirements sweep complete: every PRD ID is mapped with status and
+  evidence in docs/requirements-coverage.md. This session added edit
+  pending tasks (RUN-6), the four PRD-named built-in templates (LIB-1),
+  single-run deletion (SET-2), the user documentation set (DST-3),
+  OpenAPI + completion hooks (API-2), run comparison (OBS-6), OTLP
+  telemetry (OBS-5), re-planning with pinned edits (PLN-6), attachments
+  (PLN-7/TLS-8), prompt version history (LIB-3) and the release policy
+  (DST-4).
 
 ## Run everything
 
@@ -21,6 +30,8 @@ python tools/removal_test.py reporting       # disposable module removal test
 python3 -m las selftest                      # end-to-end against the mock
 python3 -m las serve --port 0                # loopback API (token in <data>/api-token)
 python3 -m las templates list                # built-in + user templates
+python3 -m las replan RUN --apply PROPOSAL    # re-planning (PLN-6)
+python3 -m las compare RUN_A RUN_B            # run diff (OBS-6)
 python3 -m las data status                   # retention and run counts
 ```
 
