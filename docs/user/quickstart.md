@@ -54,6 +54,7 @@ python3 -m las templates list                      # reuse plans as templates
 
 - Every command, flag and exit code: [user-guide.md](user-guide.md)
 - Something failed: [troubleshooting.md](troubleshooting.md)
+- Release channels and support: [release-policy.md](release-policy.md)
 - Writing plans by hand: [plan-schema-reference.md](plan-schema-reference.md)
 - What the engine does and does not do with your data:
   [security-guide.md](security-guide.md)

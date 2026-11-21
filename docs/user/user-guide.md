@@ -46,6 +46,7 @@ until then.
 ```bash
 python3 -m las plan "GOAL" --provider P [--model M]
                 [--granularity coarse|normal|fine] [--max-tasks N]
+                [--attach FILE ...]     # attachments (PLN-7): manifest + summaries
 python3 -m las run PLAN_OR_TEMPLATE [--var name=value ...]
                 [--gate-before TASK] [--failure-policy stop|skip|ask]
 python3 -m las list [--json]           # OBS-1 history
@@ -72,6 +73,27 @@ python3 -m las edit RUN TASK --instructions "..." [--title T]
 `edit` changes only pending tasks, is refused on terminal runs, and is
 recorded as a `task.edited` event - the run executes the edited plan even
 after a crash, because replay applies edits (RUN-5).
+
+## Re-planning (PLN-6)
+
+```bash
+python3 -m las replan RUN                     # propose: shows the diff, stores it
+python3 -m las replan RUN --apply PROPOSAL_ID # apply exactly the shown diff
+```
+
+A replan replaces the remaining (pending) tasks with the proposal. Tasks
+you edited stay pinned and are kept; their outputs must be consumed by
+the new tasks. The proposal is a stored plan, so you approve exactly the
+diff that was shown.
+
+## Comparing runs (OBS-6)
+
+```bash
+python3 -m las compare RUN_A RUN_B [--json]
+```
+
+Plan diff (tasks added/removed/changed, constraints reworded) and output
+diff (per common task: status, handoff summary, tokens).
 
 ## Library (LIB-1, LIB-2)
 
@@ -148,4 +170,4 @@ python3 -m las verify RUN               # event hash chain
 ```
 
 Run the full test suite from the repository:
-`python3 -m unittest discover -s tests` (259 tests).
+`python3 -m unittest discover -s tests` (281 tests).

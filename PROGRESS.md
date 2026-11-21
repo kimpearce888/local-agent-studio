@@ -229,6 +229,48 @@ Verification: full suite PASSED (250 tests; 230 before this session),
 twice for stability; removal tests PASSED for all six modules above;
 `studio selftest` PASSED.
 
+## Continuation session 3 (2026-11-21, evening) - requirements sweep
+
+Read the three uploaded requirement documents end to end (PRD and product
+spec are byte-identical to docs/prd.md and docs/product-spec.md; the
+global standard zip matches the process the repository already follows).
+Then a systematic per-ID sweep produced docs/requirements-coverage.md and
+closed every feasible gap:
+
+- **RUN-6 (P0) edit pending tasks**: `studio edit RUN TASK` + API PATCH.
+  Edits are `task.edited` events; replay applies them, so they survive
+  crashes. Validation refuses edits that would break the plan. PRV-6
+  model overrides surfaced in `inspect`.
+- **LIB-1 (P0)**: the four built-in templates the PRD names (research
+  report, document analysis, code review, content pipeline).
+- **SET-2 (P0)**: `delete RUN --confirm` (one run) + API DELETE.
+- **DST-3 (P0)**: five user documents under docs/user/ (quickstart, user
+  guide, troubleshooting, plan schema reference, security guide), all
+  written against the implemented commands and rules.
+- **API-2 (P1)**: `/openapi.json` (OpenAPI 3.1, token scheme) + local
+  completion hooks (`runs.completion_hook`, LAS_RUN_ID/LAS_RUN_STATUS,
+  `run.hook.executed` audit; a broken hook never takes the engine down).
+- **OBS-6 (P1)**: `studio compare A B` - plan, constraint and output
+  diff (reporting module).
+- **OBS-5 (P1)**: telemetry module - optional OTLP export, pinned GenAI
+  conventions, off by default, local endpoints only, spans for run and
+  tasks; wired into CLI run and API completion.
+- **PLN-6 (P1)**: re-planning - `Planner.replan` (repair loop on the
+  synthetic full plan), `Engine.apply_replan` (pending replaced,
+  user-edited tasks pinned, V-rule validated), `plan.replanned` event +
+  replay, two-step CLI (propose stores the diff the user approves).
+- **PLN-7/TLS-8 (P1)**: attachments module - stdlib import for
+  Markdown/TXT/CSV/JSON, planner manifest with summaries (never whole
+  files), workspace copy at run start; PDF/DOCX refused honestly until
+  the desktop importer. LIB-3: role-profile prompt version history.
+- **DST-4**: release-channel and support policy published
+  (docs/user/release-policy.md, from PRD section 19).
+
+Verification: 281 tests PASSED (250 at session start); removal tests
+PASSED for reporting, providers.mock, selftest, api, library, diagnostics,
+telemetry and attachments (planning correctly refuses removal as core);
+`studio selftest` PASSED. All work pushed through 581b2c3.
+
 ## Remaining work (honest list)
 
 - S5b CLI command split (context-object redesign).
