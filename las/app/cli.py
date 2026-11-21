@@ -580,6 +580,12 @@ def cmd_selftest(args) -> int:
     return EXIT_OK if result.ok else EXIT_RUN_FAILED
 
 
+def cmd_serve(args) -> int:
+    store = Store(args.data_dir)
+    api = ModuleRegistry().load("api", store.get_setting)
+    return api.run_server(args.data_dir, port=args.port)
+
+
 def cmd_verify(args) -> int:
     engine = Engine(args.data_dir)
     ok = engine.verify(args.run_id)
@@ -715,6 +721,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("module_id", nargs="?", help="module id (enable/disable)")
     p.add_argument("--json", dest="json_out", action="store_true")
     p.set_defaults(func=cmd_modules)
+
+    p = sub.add_parser("serve", parents=[common],
+                       help="Serve the engine HTTP API on loopback (spec 7.5)")
+    p.add_argument("--port", type=int, default=0, help="port (default: random free)")
+    p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("verify", parents=[common], help="Verify a run's event hash chain")
     p.add_argument("run_id")
