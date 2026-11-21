@@ -70,6 +70,7 @@ PLAN_JSON_SCHEMA = {
                     "constraints": {"type": "array", "items": {"type": "string"}},
                     "role": {"type": "string"},
                     "tools": {"type": "array", "items": {"type": "string"}},
+                    "gate_before": {"type": "boolean"},
                 },
                 "required": ["id", "title", "instructions", "needs"],
             },
@@ -84,7 +85,8 @@ SCHEMA_AS_TEXT = (
     ' "prerequisite": "...", "authority": "user", "fallback": "...", "scope": "all"}],'
     ' "tasks": [{"id": "t1", "type": "task|collector", "title": "...", "instructions": "...",'
     ' "needs": ["t0"], "expected_output": "...", "constraints": ["c1"], "role": "worker",'
-    ' "tools": ["list_files", "read_file", "write_file", "search_files", "patch_file"]}]}'
+    ' "tools": ["list_files", "read_file", "write_file", "search_files",'
+    ' "patch_file"], "gate_before": false}]}'
 )
 
 HARD_REQUIREMENT_RE = re.compile(
@@ -429,6 +431,7 @@ def _plan_from_draft(draft: dict, goal: str, options: dict) -> Plan:
             constraints=[str(c) for c in (t.get("constraints") or [])],
             role=str(role),
             tools=[str(x) for x in tools],
+            gate_before=bool(t.get("gate_before", False)),
         ))
     return plan
 

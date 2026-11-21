@@ -1,0 +1,29 @@
+{
+  "provider": "mock (harness dry-run; real numbers need the reference model)",
+  "corpus": {
+    "goals": 100,
+    "first_attempt_valid": 92,
+    "valid_after_repair": 100,
+    "completed_without_help": 96,
+    "gate_pauses": 4,
+    "plan_failures": 0,
+    "run_failures": 0,
+    "mean_repair_rounds": 0.08
+  },
+  "resume_after_kill": {
+    "cycles": 200,
+    "resumed_ok": 200,
+    "failures": []
+  },
+  "cap": {
+    "status": "failed",
+    "cap_reached": true,
+    "work_after_cap": 0,
+    "model_calls": 0
+  },
+  "network": {
+    "status": "succeeded",
+    "outbound_attempts": []
+  },
+  "engine_gates_passed": true
+}

@@ -130,3 +130,52 @@ def _dumps(obj) -> str:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGatePreservation(unittest.TestCase):
+    """Regression: the planner must not silently drop an approval gate the
+    model planned (gate loss is trust-boundary loss; L-01 repair rounds
+    set exactly this field)."""
+
+    def test_draft_gate_survives_into_the_plan(self):
+        reply = plan_reply()
+        reply["tasks"][2]["gate_before"] = True
+        result = Planner(MockAdapter([{"json": reply}]), "mock-model").plan(GOAL)
+        self.assertTrue(result.valid)
+        self.assertTrue(result.plan.tasks[2].gate_before)
+        self.assertFalse(result.plan.tasks[0].gate_before)
+
+    def test_schema_advertises_gate_before(self):
+        from las.modules.planning import PLAN_JSON_SCHEMA, SCHEMA_AS_TEXT
+        task_props = PLAN_JSON_SCHEMA["properties"]["tasks"]["items"]["properties"]
+        self.assertIn("gate_before", task_props)
+        self.assertIn("gate_before", SCHEMA_AS_TEXT)
+
+    def test_gate_survives_the_repair_path(self):
+        # Draft 1 breaks V-03 (needs a later task); draft 2 is valid and
+        # adds an approval gate - the gate must survive the repair loop.
+        first = plan_reply()
+        first["tasks"][1]["needs"] = ["t3"]
+        fixed = plan_reply()
+        fixed["tasks"][2]["gate_before"] = True
+        result = Planner(MockAdapter([{"json": first}, {"json": fixed}]),
+                         "mock-model").plan(GOAL)
+        self.assertTrue(result.valid)
+        self.assertEqual(result.repair_rounds, 1)
+        self.assertTrue(result.plan.tasks[2].gate_before)
+
+    def test_gate_clears_l01_at_lint_time(self):
+        # L-01 is a run-gate rule (lint), not a planner repair rule: the
+        # ungated risky plan is flagged, the gated plan lints clean.
+        from las.modules.planquality import lint
+        risky = {"id": "t1", "type": "task", "title": "Publish",
+                 "instructions": "Publish the brief to the site.",
+                 "needs": [], "tools": ["run_command", "web_fetch"]}
+        ungated = Planner(MockAdapter(
+            [{"json": plan_reply(tasks=[risky])}]), "mock-model").plan(GOAL).plan
+        self.assertIn("L-01", [f.rule for f in lint(ungated)])
+        gated = Planner(MockAdapter(
+            [{"json": plan_reply(tasks=[dict(risky, gate_before=True)])}]),
+            "mock-model").plan(GOAL).plan
+        self.assertEqual([f.rule for f in lint(gated)
+                          if f.rule == "L-01"], [])
