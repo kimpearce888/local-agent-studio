@@ -316,6 +316,22 @@ telemetry and attachments (planning correctly refuses removal as core);
   gate), version bump, tag v0.2.0 pushed with the engine-gate results in
   the annotation. 295 tests green.
 
+## Continuation session 6 (2026-11-21, night 2) - PRD 11 scale, i18n, migration
+
+- Load tests for the Scale row found two real engine defects, both fixed:
+  the driver replayed the whole event log per task (O(n^2); 500-task run
+  23 s -> 1.7 s via incremental replay with a RunState seq cursor, plus
+  Store.first_event so the plan is no longer fetched by reading the whole
+  log), and run ids had only 24 bits of entropy (birthday collisions at
+  the 10,000-run target; now 48 bits). Equivalence test pins incremental
+  == full replay.
+- Unicode end-to-end corpus (CJK / RTL Arabic / accented Latin / emoji):
+  byte-exact through plan, constraints, handoffs and both exports.
+- Migration test from v0.1.0 data dirs (no run_summary): transparent
+  cache recreation, legacy and new runs list together.
+- Benchmark at the full PRD sample: 1,000/1,000 forced kills resumed.
+- Released 0.2.1 (CHANGELOG, tag). 304 tests green.
+
 ## Remaining work (honest list)
 
 - M1 items not feasible in this sandbox: nightly contract tests against

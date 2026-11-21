@@ -115,9 +115,14 @@ reason). Verification: the test suite, module-removal tests and
 
 Performance, reliability and accessibility targets are measured by the
 benchmark and the platform matrix. The benchmark harness exists
-(`python -m bench`: 100-goal corpus, kill-resume fault injection, cap and
-socket audits; mock dry-run passed, `bench/results/`); the PRD numbers
-themselves are defined against the reference model and are open
+(`python -m bench`: 100-goal corpus, the full 1,000-kill PRD sample all
+resumed cleanly, cap and socket audits; mock dry-run passed,
+`bench/results/`). Scale is covered by load tests (500-task run 1.7 s
+after the incremental-replay fix, 10,000-run history, ~96 MB cursor-paged
+transcript), Unicode by the multilingual end-to-end corpus, and migration
+from v0.1.0 data by test_migration. Still open on the reference machine:
+the PRD numbers themselves, cold start, canvas latency and the platform
+matrix
 work (PROGRESS.md keeps the list). The engine-side NFRs that are testable
 here are covered: determinism under the mock, crash resume, the erosion
 suite (constraints survive summaries/compaction), prompt-injection checks

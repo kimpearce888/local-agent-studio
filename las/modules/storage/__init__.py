@@ -170,6 +170,13 @@ class Store:
         self.db.commit()
         return event
 
+    def first_event(self, run_id: str) -> Event:
+        """The run's first event (run.created, which carries the plan)."""
+        row = self.db.execute(
+            "SELECT * FROM events WHERE run_id=? ORDER BY seq LIMIT 1",
+            (run_id,)).fetchone()
+        return self._row_to_event(row) if row else None
+
     def events(self, run_id: str, after: int = 0) -> list[Event]:
         rows = self.db.execute(
             "SELECT * FROM events WHERE run_id=? AND seq>? ORDER BY seq", (run_id, after))

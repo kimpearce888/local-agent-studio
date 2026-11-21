@@ -5,6 +5,41 @@ follow semantic versioning. Documentation, this changelog and migration
 notes are release gates under the [release policy](docs/user/release-policy.md),
 not follow-ups.
 
+## [0.2.1] - 2026-11-21
+
+### Fixed
+
+- **The driver replays state incrementally (RUN-5).** Each task refetched
+  run state by replaying the whole event log (twice: once for the plan,
+  once for the replay), making a run O(n^2) in tasks - a 500-task run
+  (the PRD scale target) took 23 seconds of pure overhead. `replay()`
+  now accepts a previous state and an after-seq cursor, `RunState`
+  carries the cursor, and the driver resumes from it: the same run
+  completes in 1.7 s, 13.6x faster, with an equivalence test pinning
+  incremental == full replay.
+- **Run ids widened from 24 to 48 bits.** At the PRD's 10,000-run
+  history target, 24-bit suffixes birthday-collide (about 3 expected
+  collisions per 10,000 runs, confirmed by a failing load test); two
+  runs sharing an id silently merge. 48 bits put 10k-run collision odds
+  at ~2e-7.
+
+### Added
+
+- **Scale load tests (PRD section 11, Scale):** a 500-task run at the
+  MAX_TASKS_HARD cap, a 10,000-run history listed through the summary
+  cache (cold 0.64 s, warm 0.10 s), and a ~96 MB transcript read through
+  the after-seq cursor with the paging contract asserted.
+- **Unicode end-to-end tests (Internationalization):** CJK, right-to-left
+  Arabic, accented Latin and emoji goals survive planning, constraint
+  extraction, handoffs, events and both export formats byte-exactly.
+- **Migration test from v0.1.0 (Maintainability):** a legacy data
+  directory without the run_summary table opens on current code, the
+  cache is recreated transparently (CREATE TABLE IF NOT EXISTS - no
+  version bump, no dump and restore), and old and new runs list
+  together.
+- **Benchmark at the full PRD sample:** 1,000 forced-kill/resume cycles,
+  all resumed cleanly (results in bench/results/).
+
 ## [0.2.0] - 2026-11-21
 
 ### Fixed

@@ -79,6 +79,9 @@ class RunState:
     # constraint id -> (state, released_by_task_id)
     constraints: dict[str, tuple[str, str]] = field(default_factory=dict)
     compactions: list[dict] = field(default_factory=list)
+    # Last applied event seq (RUN-5): lets the driver resume a replay
+    # from the cursor instead of re-reading the whole log each task.
+    seq: int = 0
 
     # -- helpers -----------------------------------------------------------
 
@@ -138,13 +141,20 @@ class RunState:
         }
 
 
-def replay(store: Store, run_id: str, plan: Plan) -> RunState:
-    """Rebuild run state from the event log (RUN-5)."""
-    events = store.events(run_id)
-    state: Optional[RunState] = None
+def replay(store: Store, run_id: str, plan: Plan,
+           state: Optional[RunState] = None, after: int = 0) -> RunState:
+    """Rebuild run state from the event log (RUN-5).
+
+    Incremental: pass the previous ``state`` and its ``seq`` as ``after``
+    to apply only newer events.  The driver uses this per task; without
+    a state the whole log replays from the first event.
+    """
+    events = store.events(run_id, after=after)
     for ev in events:
         p = ev.payload
-        if ev.type == "run.created":
+        if state is not None:
+            state.seq = ev.seq   # cursor advances with every applied event
+        if state is None and ev.type == "run.created":
             state = RunState(
                 run_id=run_id, plan=plan, plan_id=str(p.get("plan_id", plan.id)),
                 plan_version_id=str(p.get("plan_version_id", "")),
@@ -154,6 +164,8 @@ def replay(store: Store, run_id: str, plan: Plan) -> RunState:
                 state.tasks[t.id] = TaskState(t.id)
         elif state is None:
             continue
+        elif ev.type == "run.created":
+            pass                    # already applied (incremental replay)
         elif ev.type == "task.ready":
             _task(state, p).state = "ready"
         elif ev.type == "task.stale":

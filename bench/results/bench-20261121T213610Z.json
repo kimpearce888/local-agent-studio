@@ -11,8 +11,8 @@
     "mean_repair_rounds": 0.08
   },
   "resume_after_kill": {
-    "cycles": 200,
-    "resumed_ok": 200,
+    "cycles": 1000,
+    "resumed_ok": 1000,
     "failures": []
   },
   "cap": {

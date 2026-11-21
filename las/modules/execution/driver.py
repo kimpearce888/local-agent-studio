@@ -61,8 +61,13 @@ class RunDriver:
         return self.state
 
     def state_refetch(self) -> RunState:
-        events = self.store.events(self.run_id)
-        plan_obj = events[0].payload.get("plan")
+        if self.state is not None:
+            # Incremental (RUN-5): apply only events newer than the cursor.
+            self.state = replay(self.store, self.run_id, self.state.plan,
+                                state=self.state, after=self.state.seq)
+            return self.state
+        first = self.store.first_event(self.run_id)
+        plan_obj = first.payload.get("plan")
         self.state = replay(self.store, self.run_id, Plan.from_obj(plan_obj))
         return self.state
 

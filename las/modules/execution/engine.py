@@ -26,7 +26,8 @@ class Engine:
 
     def create_run(self, plan: Plan, cap_tokens: int | None = None,
                    cap_wall_minutes: int | None = None, title: str = "") -> str:
-        run_id = "run-" + time.strftime("%Y%m%d-%H%M%S") + "-" + secrets.token_hex(3)
+        run_id = ("run-" + time.strftime("%Y%m%d-%H%M%S") + "-"
+                  + secrets.token_hex(6))
         caps = {
             "tokens": cap_tokens or DEFAULTS["cap_tokens_run"],
             "wall_minutes": cap_wall_minutes or DEFAULTS["cap_wall_minutes_run"],
