@@ -114,7 +114,10 @@ reason). Verification: the test suite, module-removal tests and
 ## Non-functional (section 11)
 
 Performance, reliability and accessibility targets are measured by the
-benchmark and the platform matrix, which need real hardware and are open
+benchmark and the platform matrix. The benchmark harness exists
+(`python -m bench`: 100-goal corpus, kill-resume fault injection, cap and
+socket audits; mock dry-run passed, `bench/results/`); the PRD numbers
+themselves are defined against the reference model and are open
 work (PROGRESS.md keeps the list). The engine-side NFRs that are testable
 here are covered: determinism under the mock, crash resume, the erosion
 suite (constraints survive summaries/compaction), prompt-injection checks

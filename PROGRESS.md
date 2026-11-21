@@ -296,11 +296,33 @@ telemetry and attachments (planning correctly refuses removal as core);
   load (test_run_end_to_end_events) passes in isolation - timing, not a
   regression.
 
+## Continuation session 5 (2026-11-21, night) - benchmark + release 0.2.0
+
+- **bench/ (PRD 17)**: deterministic 100-goal corpus (20 families x 5
+  variants: 88 clean / 8 repair / 4 gated) plus a harness measuring every
+  engine-deterministic metric - first-attempt validity, after-repair
+  validity, completion without human help, forced-kill resume (abandon at
+  a random step, resume, require success), cap terminality (zero work
+  after CAP-REACHED) and a socket audit (zero outbound connections in
+  the default configuration). Full mock dry-run: 92/100, 100/100, 96/100
+  (4 expected gate pauses), 200/200 kill-resumes, zero violations;
+  results in bench/results/. Real numbers need the reference model.
+- **Real bug found by the bench work and FIXED**: _plan_from_draft
+  silently dropped `gate_before`, so an approval gate the model planned
+  could never reach a run (and an L-01 repair suggestion to add a gate
+  could never take effect). The field now survives planning and the
+  repair loop and is advertised in both schemas; 4 regression tests.
+- **Release 0.2.0** per the release policy: CHANGELOG.md (a release
+  gate), version bump, tag v0.2.0 pushed with the engine-gate results in
+  the annotation. 295 tests green.
+
 ## Remaining work (honest list)
 
 - M1 items not feasible in this sandbox: nightly contract tests against
-  real servers (no LM Studio/Ollama available); the 100-goal benchmark
-  (needs a real model). The derived-summaries optimization is DONE
+  real servers (no LM Studio/Ollama available); the benchmark MEASUREMENT
+  (the harness is done - bench/ - and validated by the mock dry-run, but
+  the PRD targets are defined against the reference model). The
+  derived-summaries optimization is DONE
   (continuation session 4): a run_summary table caches `list` rows per
   run, refreshed only when new events appear (staleness by event seq);
   `list` replays nothing on warm listings (0.2 ms vs 5 ms replay-everything
