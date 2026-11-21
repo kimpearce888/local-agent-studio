@@ -57,31 +57,92 @@ BUILTIN_CONSTRAINTS = [
 ]
 
 
+def _tasks(*specs) -> list[dict]:
+    return [{"id": tid, "title": title, "instructions": instructions,
+             "needs": needs, "expected_output": out, "constraints": ["c1", "c2"],
+             "role": role}
+            for tid, title, instructions, needs, out, role in specs]
+
+
 def builtin_templates() -> list[dict]:
+    """The four built-ins named in LIB-1: research report, document analysis,
+    code review, content pipeline. All carry variables for reuse."""
     return [
-        {"id": "builtin-research-brief",
-         "name": "Research brief", "description":
-         "Three-task chain: gather sourced facts, draft, collect the final result.",
-         "builtin": True,
-         "plan": _builtin_plan("Produce a short brief about {{topic}}.",
-                               BRIEFING_TASKS, BUILTIN_CONSTRAINTS,
-                               "Research brief")},
-        {"id": "builtin-sanity-check",
-         "name": "Sanity check", "description":
-         "Two-task chain: one worker task and a collector; verifies a server end to end.",
+        {"id": "builtin-research-report", "name": "Research report",
+         "description": "Gather sourced facts, draft, collect a cited report about {{topic}}.",
          "builtin": True,
          "plan": _builtin_plan(
-             "Answer {{question}} with cited facts.",
-             [{"id": "work", "title": "Answer",
-               "instructions": "Answer the question with cited facts and write "
-                               "the answer to answer.md.",
-               "needs": [], "expected_output": "answer.md",
-               "constraints": ["c1", "c2"], "role": "worker"},
-              {"id": "collect", "title": "Collect",
-               "instructions": "Review the answer and copy it to result.md.",
-               "needs": ["work"], "expected_output": "result.md",
-               "constraints": ["c1", "c2"], "role": "collector"}],
-             BUILTIN_CONSTRAINTS, "Sanity check")},
+             "Produce a short, sourced research report about {{topic}}.",
+             _tasks(
+                 ("gather", "Gather facts",
+                  "Gather five sourced facts about {{topic}} and write them "
+                  "to facts.md with a source for each.", [], "facts.md", "worker"),
+                 ("draft", "Draft the report",
+                  "Draft the report from the gathered facts and write it to "
+                  "draft.md with an executive summary.", ["gather"],
+                  "draft.md", "worker"),
+                 ("collect", "Collect the final report",
+                  "Combine the draft into the final report at result.md and "
+                  "check every citation.", ["draft"], "result.md", "collector")),
+             BUILTIN_CONSTRAINTS, "Research report")},
+        {"id": "builtin-document-analysis", "name": "Document analysis",
+         "description": "Extract claims and figures from a document, assess them, summarize.",
+         "builtin": True,
+         "plan": _builtin_plan(
+             "Analyze the attached document and summarize its key claims.",
+             _tasks(
+                 ("extract", "Extract claims",
+                  "Read the document in the workspace and extract its key "
+                  "claims with page or section references into claims.md.",
+                  [], "claims.md", "worker"),
+                 ("assess", "Assess the claims",
+                  "Assess each claim: supported, unsupported or "
+                  "contradicted, with the evidence, and write assessments.md.",
+                  ["extract"], "assessments.md", "worker"),
+                 ("collect", "Summarize",
+                  "Write the final analysis summary to result.md covering "
+                  "every assessed claim.", ["assess"], "result.md",
+                  "collector")),
+             BUILTIN_CONSTRAINTS, "Document analysis")},
+        {"id": "builtin-code-review", "name": "Code review",
+         "description": "Review a change set for correctness, security and tests.",
+         "builtin": True,
+         "plan": _builtin_plan(
+             "Review the code in the workspace and report the findings.",
+             _tasks(
+                 ("survey", "Survey the change",
+                  "List the changed files and what each change does; write "
+                  "survey.md.", [], "survey.md", "worker"),
+                 ("review", "Review for defects",
+                  "Review the changes for correctness problems, security "
+                  "issues and missing tests; write findings.md with a "
+                  "severity for each finding.", ["survey"], "findings.md",
+                  "worker"),
+                 ("collect", "Collect the review",
+                  "Write the final review to result.md with must-fix and "
+                  "nice-to-have sections.", ["review"], "result.md",
+                  "collector")),
+             BUILTIN_CONSTRAINTS, "Code review")},
+        {"id": "builtin-content-pipeline", "name": "Content pipeline",
+         "description": "Outline, draft and polish a piece of content about {{topic}}.",
+         "builtin": True,
+         "plan": _builtin_plan(
+             "Produce a polished piece of content about {{topic}}.",
+             _tasks(
+                 ("outline", "Outline",
+                  "Write an outline for the content about {{topic}} to "
+                  "outline.md with section goals.", [], "outline.md", "worker"),
+                 ("draft", "Draft",
+                  "Write the full draft following the outline to draft.md.",
+                  ["outline"], "draft.md", "worker"),
+                 ("polish", "Polish",
+                  "Polish the draft for tone, length and clarity; write "
+                  "final.md.", ["draft"], "final.md", "worker"),
+                 ("collect", "Collect",
+                  "Write the final content to result.md and verify it "
+                  "follows the outline.", ["polish"], "result.md",
+                  "collector")),
+             BUILTIN_CONSTRAINTS, "Content pipeline")},
     ]
 
 
@@ -170,6 +231,18 @@ def save_role_profile(store: Store, profile: dict) -> dict:
 
 def get_role_profile(store: Store, profile_id: str) -> Optional[dict]:
     return store.get_role_profile(profile_id)
+
+
+BRIEFING_TASKS = _tasks(
+    ("gather", "Gather facts",
+     "Gather five sourced facts about the topic and write them to facts.md "
+     "with a source for each.", [], "facts.md", "worker"),
+    ("draft", "Draft the brief",
+     "Draft the deliverable from the gathered facts and write it to "
+     "draft.md.", ["gather"], "draft.md", "worker"),
+    ("collect", "Collect the final result",
+     "Combine the earlier outputs into the final result at result.md and "
+     "check every constraint.", ["draft"], "result.md", "collector"))
 
 
 __all__ = [

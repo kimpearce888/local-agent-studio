@@ -346,8 +346,15 @@ def cmd_inspect(args) -> int:
         if args.json_out:
             _print_json(obj)
             return EXIT_OK
+        task = next((t for t in state.plan.tasks if t.id == ts.task_id), None)
         print(f"task {ts.task_id}: {ts.state}  attempts={len(ts.attempts)} "
-              f"tool_calls={ts.tool_calls}")
+              f"tool_calls={ts.tool_calls}"
+              + ("  (edited)" if ts.edited else ""))
+        if task is not None and task.model:
+            print(f"  model override: {task.model.get('provider_id', '')}/"
+                  f"{task.model.get('model_id', '')}")
+        if task is not None and task.params:
+            print(f"  params: {json.dumps(task.params, ensure_ascii=False)}")
         if ts.error_code:
             print(f"  error: {ts.error_code}")
         if ts.handoff:
@@ -362,7 +369,12 @@ def cmd_inspect(args) -> int:
     for t in state.plan.tasks:
         ts = state.tasks.get(t.id)
         st = ts.state if ts else "pending"
-        print(f"  {t.id:<8} {st:<18} {t.title}")
+        bits = ""
+        if t.model and t.model.get("provider_id"):
+            bits += f"  [model: {t.model['provider_id']}/{t.model.get('model_id', '')}]"
+        if ts is not None and ts.edited:
+            bits += "  (edited)"
+        print(f"  {t.id:<8} {st:<18} {t.title}{bits}")
     return EXIT_OK
 
 
@@ -728,6 +740,48 @@ def cmd_data(args) -> int:
     return EXIT_OK
 
 
+def cmd_delete(args) -> int:
+    """Delete one run and its workspace (SET-2). Requires --confirm."""
+    store = Store(args.data_dir)
+    if args.run_id not in store.run_ids():
+        print(f"No run {args.run_id}.")
+        return EXIT_INVALID
+    if not args.confirm:
+        print(f"This deletes run {args.run_id}, its workspace and exports.\n"
+              f"Re-run with --confirm to actually delete.")
+        return EXIT_INVALID
+    store.delete_run(args.run_id)
+    print(f"Deleted run {args.run_id}.")
+    return EXIT_OK
+
+
+def cmd_edit(args) -> int:
+    """Edit a pending task (RUN-6): instructions, title, model override."""
+    engine = Engine(args.data_dir)
+    changes: dict = {}
+    if args.instructions:
+        changes["instructions"] = args.instructions
+    if args.title:
+        changes["title"] = args.title
+    if args.model_provider or args.model_id:
+        changes["model"] = {"provider_id": args.model_provider,
+                            "model_id": args.model_id}
+    if not changes:
+        print("Nothing to change: use --instructions, --title or "
+              "--model-provider/--model-id.")
+        return EXIT_INVALID
+    try:
+        engine.edit_task(args.run_id, args.task_id, changes, args.reason)
+    except ValueError as exc:
+        print(str(exc))
+        return EXIT_INVALID
+    print(f"Edited task {args.task_id} in {args.run_id}: "
+          f"{', '.join(sorted(changes))}")
+    if args.reason:
+        print(f"Reason: {args.reason}")
+    return EXIT_OK
+
+
 def cmd_models(args) -> int:
     """Model lifecycle (PRV-8): list, load, unload."""
     store = Store(args.data_dir)
@@ -937,6 +991,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--confirm", action="store_true",
                    help="required for delete-all")
     p.set_defaults(func=cmd_data)
+
+    p = sub.add_parser("delete", parents=[common],
+                       help="Delete one run and its workspace (SET-2)")
+    p.add_argument("run_id")
+    p.add_argument("--confirm", action="store_true",
+                   help="required; deletion is permanent")
+    p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("edit", parents=[common],
+                       help="Edit a pending task of a run (RUN-6)")
+    p.add_argument("run_id")
+    p.add_argument("task_id")
+    p.add_argument("--instructions", default="", help="new instructions")
+    p.add_argument("--title", default="", help="new title")
+    p.add_argument("--model-provider", dest="model_provider", default="",
+                   help="per-task model override: provider id")
+    p.add_argument("--model-id", dest="model_id", default="",
+                   help="per-task model override: model id")
+    p.add_argument("--reason", default="", help="why the edit was made")
+    p.set_defaults(func=cmd_edit)
 
     p = sub.add_parser("models", parents=[common],
                        help="Model lifecycle: list, load, unload (PRV-8)")

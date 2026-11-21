@@ -18,6 +18,7 @@ EVENT_TYPES = (
     "compaction.applied",
     "handoff.recorded", "handoff.edited",
     "constraint.released",
+    "task.edited",
     "task.succeeded", "task.failed", "task.skipped",
     "run.succeeded", "run.failed",
 )

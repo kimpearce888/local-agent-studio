@@ -36,12 +36,16 @@ class TestTemplates(LibraryTestBase):
     def test_builtins_seed_once_and_cannot_be_deleted(self):
         ensure_builtin_templates(self.store)
         ids = {t["id"] for t in self.store.list_templates()}
-        self.assertIn("builtin-research-brief", ids)
+        # The four built-ins LIB-1 names.
+        self.assertEqual(ids, {"builtin-research-report",
+                               "builtin-document-analysis",
+                               "builtin-code-review",
+                               "builtin-content-pipeline"})
         # Idempotent.
         ensure_builtin_templates(self.store)
         self.assertEqual(len(self.store.list_templates()), len(builtin_templates()))
         with self.assertRaises(LibraryError) as ctx:
-            delete_template(self.store, "builtin-research-brief")
+            delete_template(self.store, "builtin-research-report")
         self.assertIn("cannot be deleted", str(ctx.exception))
 
     def test_builtin_templates_validate(self):
@@ -68,7 +72,7 @@ class TestTemplates(LibraryTestBase):
 
     def test_duplicate_builtin_creates_user_copy(self):
         ensure_builtin_templates(self.store)
-        entry = duplicate_template(self.store, "builtin-sanity-check",
+        entry = duplicate_template(self.store, "builtin-code-review",
                                    "My sanity check")
         self.assertFalse(entry["builtin"])
         self.assertIn("My sanity check",
@@ -91,11 +95,11 @@ class TestTemplates(LibraryTestBase):
         rows = json.loads(out)
         self.assertTrue(any(r["id"].startswith("builtin-") for r in rows))
         # Deleting a builtin via CLI is refused with an actionable message.
-        code, out = self.run_cli("templates", "delete", "builtin-research-brief")
+        code, out = self.run_cli("templates", "delete", "builtin-research-report")
         self.assertEqual(code, EXIT_INVALID)
         self.assertIn("cannot be deleted", out)
         # Templates are runnable: run accepts a template id (spec S10 Use).
-        code, out = self.run_cli("run", "builtin-sanity-check")
+        code, out = self.run_cli("run", "builtin-code-review")
         self.assertNotEqual(code, 0)   # no provider configured yet: refused, not crashed
 
 

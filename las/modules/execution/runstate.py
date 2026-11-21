@@ -48,6 +48,7 @@ class TaskState:
     tool_denials: int = 0
     usage: dict = field(default_factory=dict)
     stale: bool = False
+    edited: bool = False
 
     def to_obj(self) -> dict:
         return {
@@ -56,6 +57,7 @@ class TaskState:
             "handoff": self.handoff, "gate_reason": self.gate_reason,
             "error_code": self.error_code, "tool_calls": self.tool_calls,
             "tool_denials": self.tool_denials, "usage": self.usage, "stale": self.stale,
+            "edited": self.edited,
         }
 
 
@@ -203,6 +205,23 @@ def replay(store: Store, run_id: str, plan: Plan) -> RunState:
             _task(state, p).handoff = dict(p.get("handoff") or {})
         elif ev.type == "handoff.edited":
             _task(state, p).handoff = dict(p.get("handoff") or {})
+        elif ev.type == "task.edited":
+            # RUN-6: an edit of a pending task is part of the event log, so
+            # replay applies it to the plan the run actually executes.
+            changes = ev.payload or {}
+            tid = changes.get("task_id", "")
+            ts = state.tasks.get(tid)
+            task = next((t for t in state.plan.tasks if t.id == tid), None)
+            if ts is not None and task is not None:
+                ts.edited = True
+                if "title" in changes:
+                    task.title = str(changes["title"])
+                if "instructions" in changes:
+                    task.instructions = str(changes["instructions"])
+                if "model" in changes:
+                    task.model = dict(changes["model"]) if changes["model"] else None
+                if "params" in changes:
+                    task.params = dict(changes["params"] or {})
         elif ev.type == "task.succeeded":
             ts = _task(state, p)
             ts.state = "succeeded"

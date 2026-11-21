@@ -264,6 +264,11 @@ def make_handler(data_dir: str, token: str):
             raise ApiError(404, "NOT-FOUND", f"No route for {method} /plans/{plan_id}.")
 
         def _runs(self, method, parts, q):
+            if len(parts) == 2 and method == "DELETE":
+                if parts[1] not in store.run_ids():
+                    raise ApiError(404, "NOT-FOUND", f"No run {parts[1]}.")
+                store.delete_run(parts[1])
+                return self._send(200, {"deleted": parts[1]})
             if len(parts) == 1 and method == "GET":
                 rows = []
                 for run_id in store.run_ids():
