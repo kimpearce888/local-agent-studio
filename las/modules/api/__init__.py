@@ -302,7 +302,7 @@ def make_handler(data_dir: str, token: str):
                 if fmt not in ("markdown", "json"):
                     raise ApiError(422, "BAD-REQUEST", "format must be markdown or json.")
                 try:
-                    from las.modules.reporting import export_run
+                    from las.modules.reporting import export_run  # optional-dep: reporting
                 except ImportError:
                     raise ApiError(409, "MODULE-UNAVAILABLE",
                                    "The reporting module is not available.",

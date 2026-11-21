@@ -16,6 +16,15 @@ from las.modules.storage import Store  # noqa: E402
 from las.shared.provider_contract import ProviderProfile  # noqa: E402
 
 
+def module_installed(module_id: str) -> bool:
+    try:
+        from las.app.registry import ModuleRegistry
+        ModuleRegistry().get(module_id)
+        return True
+    except Exception:  # noqa: BLE001 - ModuleNotInstalledError
+        return False
+
+
 class ApiTestBase(unittest.TestCase):
     def setUp(self):
         self.data_dir = tempfile.mkdtemp(prefix="las-api-")
@@ -107,7 +116,9 @@ class TestRuns(ApiTestBase):
             json.dump(script, fh)
         os.environ["LAS_MOCK_SCRIPT"] = path
 
-    def test_run_end_to_end_events_and_export(self):
+    @unittest.skipUnless(module_installed("providers.mock"),
+                         "fixture uses the providers.mock module")
+    def test_run_end_to_end_events(self):
         self._script()
         try:
             status, body = self.call("/runs", method="POST", body={"plan": self._plan()})
@@ -126,11 +137,18 @@ class TestRuns(ApiTestBase):
             self.assertIn("run.created", types)
             self.assertIn("run.succeeded", types)
             status, body = self.call(f"/runs/{run_id}/export?format=markdown")
-            self.assertEqual(status, 200)
-            self.assertIn(run_id, body["content"])
+            if module_installed("reporting"):
+                self.assertEqual(status, 200)
+                self.assertIn(run_id, body["content"])
+            else:
+                # Designed degradation: the export endpoint reports that the
+                # optional reporting module is unavailable.
+                self.assertEqual(status, 409)
         finally:
             os.environ.pop("LAS_MOCK_SCRIPT", None)
 
+    @unittest.skipUnless(module_installed("providers.mock"),
+                         "fixture uses the providers.mock module")
     def test_events_after_seq_polling(self):
         self._script()
         try:
