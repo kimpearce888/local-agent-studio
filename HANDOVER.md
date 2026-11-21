@@ -20,6 +20,13 @@ reference and migration source, kept runnable for parity tests.
 
 ## Where things stand
 
+0. **The Rust product core exists and is tested** (this session,
+   commits 828968e + this one): las-core with storage/agents/
+   communication/runtime/scheduler (36 unit tests), acceptance
+   scenarios 19.1 + 19.2 steps 1-6, and the egui desktop shell with
+   Dashboard/Agents/Inbox live (5 kittest headless UI tests, release
+   build green). 43 Rust tests total. See BUILD_STATUS.md for the
+   module-by-module breakdown and the exact next action.
 1. **Reference engine hardened this session** (audit items 6, 8, 11,
    18 fixed with regression tests in `tests/test_mandate_fixes.py`):
    real token counting with honestly-labelled estimates; supporting
@@ -39,9 +46,13 @@ reference and migration source, kept runnable for parity tests.
 
 ## What is NOT done (do not claim otherwise)
 
-- The Rust agent domain (agents, sessions, memory, inbox,
-  communication, channels, teams/topology, projects) - being built;
-  nothing of it is complete yet.
+- Real HTTP provider adapters + scheduler wiring in the runtime (the
+  responder is test-injected today), the remaining desktop screens
+  (Sessions & Memory, Channels, Teams/Network, Providers...), context
+  rollover/compaction for growing sessions, projects/workspaces/
+  artifacts, teams/topology editor, MCP client, hardened web fetch,
+  Landlock sandboxing (audit items 5, 10, 12), acceptance scenarios
+  19.3-19.8, .deb/AppImage packaging, version unification.
 - Shared inference scheduler, context rollover, MCP client, hardened
   web fetch, Landlock sandboxing for run_command (audit items 5, 10,
   12), recursive module registry (item 14).

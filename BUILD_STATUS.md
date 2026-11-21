@@ -72,13 +72,52 @@ Independent persistent multi-agent desktop environment, Rust-first:
   Evidence captured; the binary itself compiles and its UI is tested
   headlessly. This is an environment limit, not a product limit.
 
+## Current state of the Rust product engine (this session)
+
+`rust/crates/las-core` - the agent-first domain, all tested:
+
+- **storage.rs** (10 tests): SQLite WAL; agents, immutable
+  profile-version history, sessions + canonical transcripts, versioned
+  memory, durable inbox with delivery states + idempotency, channels,
+  blackboard, comm_rules topology (default-deny agent→agent); opens
+  the Python engine's DB alongside (single data dir, both engines).
+- **agents.rs** (7 tests): full lifecycle - create, edit-as-new-
+  version, duplicate, enable/disable, status transitions, archive,
+  reset-session-keeps-identity-and-memory, delete with
+  KeepMemory/DeleteAll retention, JSON export.
+- **communication.rs** (8 tests): send_message, agent_call with
+  correlated responses, delegate with lineage-based cycle + depth
+  protection, transfer_control, channel posting with membership +
+  topology fanout; everything persisted before delivery.
+- **runtime.rs** (6 tests): tokio actor per agent, per-session turn
+  locks, queue/wait busy modes, turn-boundary delivery with canonical
+  transcript appends, restart recovery of undelivered entries,
+  disabled agents receive nothing.
+- **scheduler.rs** (5 tests): per-(provider,model) bounded
+  concurrency, round-robin fairness across agents (a spamming agent
+  cannot starve others), per-agent inflight caps, cancellation skips
+  waiters; slot handoff by permit ownership transfer (no drift).
+
+`rust/crates/las-desktop` - the egui shell (ADR-002/003): fourteen
+navigation areas (mandate section 14); Dashboard/Agents/Inbox wired to
+real las-core data (real create/toggle/compose actions); unbuilt areas
+show an honest construction note, no fake controls. 5 egui_kittest
+headless tests (render + click-through + the harness's own
+accessibility check). Release build green.
+
+Acceptance scenarios landed: 19.1 (four independent agents, one shared
+endpoint, independent sessions/transcripts/memory, bounded shared
+concurrency) and 19.2 steps 1-6 (message to a busy agent queued,
+delivered at a turn boundary, acked, answered, all visible after a
+full restart) - as integration tests in
+`rust/crates/las-core/tests/acceptance.rs`.
+
 ## Test results
 
-- Python reference engine: 313 tests (was 304 + 9 mandate-fix
-  regressions + support-usage/replay additions), all green headless;
-  326+ with the GUI suite under Xvfb.
-- Rust: `cargo build` green for las-core placeholder + las-desktop
-  shell; kittest UI tests being added alongside las-core.
+- Rust: 43 passed (36 las-core unit + 2 acceptance + 5 UI),
+  `cargo test --workspace` green; `cargo build --release` green.
+- Python reference engine: 313 tests green headless (326+ with the
+  tkinter GUI suite under Xvfb).
 
 ## Blockers (honest)
 
@@ -86,12 +125,15 @@ Independent persistent multi-agent desktop environment, Rust-first:
   capability tests and real-model benchmark quality remain unverified
   (audit items 19, 20).
 - No passwordless sudo: cannot install GTK/WebKit (Tauri) or
-  xkbcommon-x11 (on-screen egui window in-sandbox only).
+  xkbcommon-x11 (on-screen egui window in-sandbox only - ADR-003).
 
 ## Exact next engineering action
 
-Implement `rust/crates/las-core`: storage schema (agents, profile
-versions, sessions, memory, inbox, messages, channels) over SQLite WAL
-with a reader for the existing Python event log; then the agent actor
-runtime and the communication operations with delivery states; then
-wire the egui Agents/Inbox screens to it (kittest-verified).
+Wire the production responder: an OpenAI-compatible HTTP adapter
+(LM Studio/Ollama/llama.cpp/vLLM/Unsloth Studio, LAN endpoints
+included) behind `InferenceScheduler`, then make `AgentRuntime` call
+it for real model turns (usage recorded per turn). Then the remaining
+live screens (Sessions & Memory, Channels, Teams/Network topology
+editor) and the remaining acceptance scenarios (19.3-19.8) with the
+same integration-test pattern. Then .deb packaging (dpkg-deb needs no
+sudo) and the Python→Rust migration reader for run/event history.
