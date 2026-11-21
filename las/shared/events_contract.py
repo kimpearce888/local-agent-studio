@@ -20,7 +20,7 @@ EVENT_TYPES = (
     "constraint.released",
     "task.edited",
     "task.succeeded", "task.failed", "task.skipped",
-    "run.succeeded", "run.failed",
+    "run.succeeded", "run.failed", "run.hook.executed",
 )
 
 

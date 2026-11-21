@@ -53,6 +53,8 @@ class _RunCoordinator:
             finally:
                 with self.lock:
                     self.active.pop(run_id, None)
+                self._completion_hook(engine, run_id)
+
         thread = threading.Thread(target=work, daemon=True, name=f"run-{run_id}")
         thread.start()
         return thread
@@ -65,6 +67,120 @@ class _RunCoordinator:
                            f"Run {run_id} is not running in this engine; "
                            f"controls need an active run.")
         return driver
+
+    @staticmethod
+    def _hook_for(engine) -> str:
+        try:
+            return str(engine.store.get_setting("runs.completion_hook", "") or "")
+        except Exception:  # noqa: BLE001 - settings must never break a run
+            return ""
+
+    def _completion_hook(self, engine, run_id):
+        """API-2: a local hook on run completion. The command configured in
+        settings (runs.completion_hook) runs with LAS_RUN_ID and
+        LAS_RUN_STATUS in its environment. Failures are recorded, never
+        raised: a broken hook must not take the engine down."""
+        cmd = self._hook_for(engine)
+        if not cmd:
+            return
+        import subprocess
+        import time as _time
+        try:
+            status = engine.state(run_id).status
+            started = _time.monotonic()
+            proc = subprocess.run(
+                cmd, shell=True, timeout=60, capture_output=True,
+                env={**os.environ, "LAS_RUN_ID": run_id,
+                     "LAS_RUN_STATUS": status})
+            engine.store.append(run_id, "run.hook.executed", {
+                "command": cmd, "exit_code": proc.returncode,
+                "status": status,
+                "duration_ms": int((_time.monotonic() - started) * 1000)})
+        except Exception as exc:  # noqa: BLE001 - hook errors are data
+            try:
+                engine.store.append(run_id, "run.hook.executed", {
+                    "command": cmd, "exit_code": -1, "error": str(exc)})
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def openapi_document(port_note: str = "http://127.0.0.1:PORT") -> dict:
+    """OpenAPI 3.1 description of the engine API (API-2, spec 7.5)."""
+    def op(summary, **kw):
+        base = {"summary": summary, "responses": {"200": {"description": "OK"},
+                "401": {"description": "Missing or wrong X-Studio-Token"},
+                "409": {"description": "Refused (see error.code)"}}}
+        base.update(kw)
+        return base
+    return {
+        "openapi": "3.1.0",
+        "info": {"title": "Local Agent Studio engine API",
+                 "version": "1.0.0",
+                 "description": "Loopback-only engine API. Every request "
+                                "except this document requires the "
+                                "per-launch token in X-Studio-Token."},
+        "servers": [{"url": port_note}],
+        "security": [{"studioToken": []}],
+        "paths": {
+            "/runs": {
+                "get": op("List runs"),
+                "post": op("Create and start a run",
+                           requestBody={"content": {"application/json": {
+                               "schema": {"type": "object",
+                                          "properties": {
+                                              "plan": {"description": "plan object or stored plan id"},
+                                              "cap_tokens": {"type": "integer"},
+                                              "cap_wall_minutes": {"type": "integer"}}}}}}),
+            },
+            "/runs/{id}": {
+                "get": op("Run state", parameters=[
+                    {"name": "id", "in": "path", "required": True,
+                     "schema": {"type": "string"}}]),
+                "delete": op("Delete a run and its workspace", parameters=[
+                    {"name": "id", "in": "path", "required": True,
+                     "schema": {"type": "string"}}]),
+                "post": op("Control: pause|resume|cancel|approve|reject|"
+                           "retry|skip|rerun", parameters=[
+                    {"name": "id", "in": "path", "required": True,
+                     "schema": {"type": "string"}}]),
+            },
+            "/runs/{id}/events": {
+                "get": op("Events after a sequence number", parameters=[
+                    {"name": "id", "in": "path", "required": True,
+                     "schema": {"type": "string"}},
+                    {"name": "after", "in": "query", "schema": {"type": "integer"}}]),
+            },
+            "/runs/{id}/tasks/{taskId}": {
+                "patch": op("Edit a pending task (RUN-6)", parameters=[
+                    {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "taskId", "in": "path", "required": True, "schema": {"type": "string"}}]),
+            },
+            "/runs/{id}/export": {
+                "get": op("Export markdown or JSON", parameters=[
+                    {"name": "id", "in": "path", "required": True, "schema": {"type": "string"}},
+                    {"name": "format", "in": "query", "schema": {"type": "string",
+                                       "enum": ["markdown", "json"]}}]),
+            },
+            "/providers": {"get": op("List providers"), "post": op("Add a provider")},
+            "/providers/{id}": {
+                "put": op("Update a provider"),
+                "delete": op("Delete a provider"),
+            },
+            "/providers/{id}/probe": {"post": op("Capability probe (PRV-4)")},
+            "/providers/{id}/models/{model}/load": {
+                "post": op("Load a model (PRV-8, llama.cpp router)")},
+            "/providers/{id}/models/{model}/unload": {
+                "post": op("Unload a model (PRV-8)")},
+            "/plans": {"get": op("List plans"), "post": op("Save a plan")},
+            "/templates": {"get": op("List templates"), "post": op("Save a template")},
+            "/openapi.json": {"get": {"summary": "This document",
+                                      "security": [],
+                                      "responses": {"200": {"description": "OK"}}}},
+        },
+        "components": {"securitySchemes": {
+            "studioToken": {"type": "apiKey", "in": "header",
+                            "name": "X-Studio-Token"}}},
+    }
 
 
 def _error_body(exc: ApiError) -> bytes:
@@ -139,6 +255,9 @@ def make_handler(data_dir: str, token: str):
 
         def _route(self, method: str):
             try:
+                if self.path == "/openapi.json" and method == "GET":
+                    self._send(200, openapi_document())
+                    return
                 if not self._check_security():
                     return
                 u = urlparse(self.path)
