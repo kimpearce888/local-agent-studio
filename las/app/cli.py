@@ -423,6 +423,12 @@ def cmd_task_control(args, action: str) -> int:
 
 def cmd_export(args) -> int:
     store = Store(args.data_dir)
+    # Capability gate first: a disabled module must produce the actionable
+    # message even when other arguments are missing.
+    ModuleRegistry().load("reporting", store.get_setting)
+    if not getattr(args, "run_id", None):
+        print("usage: studio export RUN_ID [--format markdown|json]")
+        return EXIT_INVALID
     # Authoritative enablement boundary: reporting is independently
     # disableable, so the command loads it through the registry.
     reporting = ModuleRegistry().load("reporting", store.get_setting)
@@ -598,6 +604,184 @@ def _now() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def cmd_templates(args) -> int:
+    store = Store(args.data_dir)
+    library = ModuleRegistry().load("library", store.get_setting)
+    if args.templates_cmd == "save":
+        import json as _json
+        # The plan file may land in either positional slot depending on how
+        # far the user got; accept both.
+        plan_file = args.plan_file or args.template_id
+        if not plan_file:
+            print("usage: studio templates save PLAN_FILE --name NAME")
+            return EXIT_INVALID
+        with open(plan_file, encoding="utf-8") as fh:
+            plan_obj = _json.load(fh)
+        entry = library.save_template(store, plan_obj, args.name,
+                                      args.description or "")
+        print(f"Saved template {entry['id']} ({entry['task_count']} tasks)")
+        return EXIT_OK
+    if args.templates_cmd == "duplicate":
+        entry = library.duplicate_template(store, args.template_id, args.new_name or "")
+        print(f"Duplicated as {entry['id']}")
+        return EXIT_OK
+    if args.templates_cmd == "delete":
+        try:
+            library.delete_template(store, args.template_id)
+        except library.LibraryError as exc:
+            print(str(exc))
+            return EXIT_INVALID
+        print(f"Deleted {args.template_id}")
+        return EXIT_OK
+    if args.templates_cmd == "export":
+        tpl = next((t for t in store.list_templates()
+                    if t["id"] == args.template_id), None)
+        if tpl is None:
+            print(f"plan not found: {args.template_id}")
+            return EXIT_INVALID
+        import json as _json
+        out = args.output or f"{tpl['id']}.json"
+        with open(out, "w", encoding="utf-8") as fh:
+            _json.dump(tpl, fh, ensure_ascii=False, indent=1)
+        print(f"Exported template to {out}")
+        return EXIT_OK
+    # list (default)
+    library.ensure_builtin_templates(store)
+    rows = store.list_templates()
+    if args.json_out:
+        _print_json(rows)
+        return EXIT_OK
+    for t in rows:
+        flag = "builtin" if t.get("builtin") else "user"
+        variables = ", ".join(t.get("variables") or []) or "-"
+        print(f"{t['id']:<28} {flag:<7} {t.get('task_count', 0)} tasks  "
+              f"vars: {variables}  {t.get('name', '')}")
+    return EXIT_OK
+
+
+def cmd_roles(args) -> int:
+    store = Store(args.data_dir)
+    library = ModuleRegistry().load("library", store.get_setting)
+    if args.roles_cmd == "save":
+        import json as _json
+        file = args.file or args.profile_id
+        if not file:
+            print("usage: studio roles save PROFILE_FILE")
+            return EXIT_INVALID
+        with open(file, encoding="utf-8") as fh:
+            profile = _json.load(fh)
+        try:
+            entry = library.save_role_profile(store, profile)
+        except library.LibraryError as exc:
+            print(str(exc))
+            return EXIT_INVALID
+        print(f"Saved role profile {entry['id']} ({entry['role']})")
+        return EXIT_OK
+    if args.roles_cmd == "delete":
+        if store.get_role_profile(args.profile_id) is None:
+            print(f"plan not found: {args.profile_id}")
+            return EXIT_INVALID
+        store.delete_role_profile(args.profile_id)
+        print(f"Deleted {args.profile_id}")
+        return EXIT_OK
+    rows = store.list_role_profiles()
+    if args.json_out:
+        _print_json(rows)
+        return EXIT_OK
+    for r in rows:
+        print(f"{r['id']:<20} {r['role']:<9} {r['name']}  "
+              f"tools: {', '.join(r.get('tools') or []) or '-'}")
+    return EXIT_OK
+
+
+def cmd_data(args) -> int:
+    """Data management (SET-2): retention, prune, delete all data."""
+    store = Store(args.data_dir)
+    if args.data_cmd == "prune":
+        retention = str(store.get_setting("data.retention", "keep forever"))
+        if retention == "keep forever":
+            print("Retention is 'keep forever'; nothing pruned. "
+                  "Change it with: studio data prune --days N")
+            return EXIT_OK
+        days = args.days if args.days is not None else int(retention.split()[0])
+        pruned = store.prune_runs(days)
+        for run_id in pruned:
+            print(f"Deleted run {run_id} (older than {days} days)")
+        print(f"Pruned {len(pruned)} runs.")
+        return EXIT_OK
+    if args.data_cmd == "delete-all":
+        if not getattr(args, "confirm", False):
+            print("This deletes every run, workspace and export. Nothing else.\n"
+                  "Re-run with --confirm to actually delete.")
+            return EXIT_INVALID
+        count = len(store.run_ids())
+        store.delete_all_data()
+        print(f"Deleted all data: {count} runs (providers, plans, templates, "
+              f"role profiles and settings were kept).")
+        return EXIT_OK
+    # status (default)
+    runs = store.run_ids()
+    print(f"Data directory: {args.data_dir}")
+    print(f"Runs: {len(runs)}")
+    print(f"Retention: {store.get_setting('data.retention', 'keep forever')}")
+    print("Commands: prune, delete-all --confirm")
+    return EXIT_OK
+
+
+def cmd_models(args) -> int:
+    """Model lifecycle (PRV-8): list, load, unload."""
+    store = Store(args.data_dir)
+    registry, provider_id = _registry_for(store, args.provider)
+    adapter = registry.get(provider_id)
+    if args.models_cmd == "load":
+        if not args.model:
+            print("usage: studio models load --provider P --model M")
+            return EXIT_INVALID
+        adapter.preload(args.model)
+        print(f"Loaded {args.model} on {provider_id}.")
+        return EXIT_OK
+    if args.models_cmd == "unload":
+        if not args.model:
+            print("usage: studio models unload --provider P --model M")
+            return EXIT_INVALID
+        adapter.unload(args.model)
+        print(f"Unloaded {args.model} on {provider_id}.")
+        return EXIT_OK
+    # list
+    for m in adapter.list_models():
+        flag = "loaded" if m.get("loaded") else "available"
+        print(f"{m['id']:<40} {flag}")
+    return EXIT_OK
+
+
+def cmd_diagnostics(args) -> int:
+    store = Store(args.data_dir)
+    diag = ModuleRegistry().load("diagnostics", store.get_setting)
+    print("The diagnostics bundle contains:")
+    for item in diag.diagnostics_items():
+        print(f"  - {item}")
+    print("Nothing is sent anywhere; the file is written locally.")
+    from las.app.capabilities import is_enabled
+    registry = ModuleRegistry()
+    modules = [{"id": m.id, "version": m.version, "core": m.core,
+                "enabled": is_enabled(registry, m.id, store.get_setting),
+                "summary": m.summary}
+               for m in registry.manifests.values()]
+    caps = []
+    import json as _json, os as _os
+    caps_path = _os.path.join(args.data_dir, "capabilities.json")
+    if _os.path.exists(caps_path):
+        with open(caps_path, encoding="utf-8") as fh:
+            caps = _json.load(fh)
+    engine = Engine(args.data_dir)
+    bundle = diag.build_diagnostics(store, engine, modules, caps)
+    out = args.output or _os.path.join(args.data_dir, "diagnostics.json")
+    with open(out, "w", encoding="utf-8") as fh:
+        _json.dump(bundle, fh, ensure_ascii=False, indent=1)
+    print(f"Wrote {out}")
+    return EXIT_OK
+
+
 # -- parser --------------------------------------------------------------------
 
 
@@ -689,7 +873,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(func=lambda a, act=action: cmd_task_control(a, act))
 
     p = sub.add_parser("export", parents=[common], help="Export a run")
-    p.add_argument("run_id")
+    # run_id is optional at the parser level so the capability gate can
+    # fire (with an actionable message) before usage errors are reported.
+    p.add_argument("run_id", nargs="?")
     p.add_argument("--format", choices=("markdown", "json"), default="markdown")
     p.add_argument("--no-ai-notice", action="store_true")
     p.add_argument("--redact-prompts", action="store_true")
@@ -721,6 +907,49 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("module_id", nargs="?", help="module id (enable/disable)")
     p.add_argument("--json", dest="json_out", action="store_true")
     p.set_defaults(func=cmd_modules)
+
+    p = sub.add_parser("templates", parents=[common], help="Manage plan templates (LIB-1)")
+    p.add_argument("templates_cmd", nargs="?",
+                   choices=("list", "save", "duplicate", "delete", "export"),
+                   default="list")
+    p.add_argument("template_id", nargs="?", help="template id")
+    p.add_argument("plan_file", nargs="?", help="plan JSON file (save)")
+    p.add_argument("--name", default="", help="template name (save)")
+    p.add_argument("--description", default="", help="template description")
+    p.add_argument("--new-name", dest="new_name", default="", help="duplicate name")
+    p.add_argument("-o", "--output", default="", help="output file (export)")
+    p.add_argument("--json", dest="json_out", action="store_true")
+    p.set_defaults(func=cmd_templates)
+
+    p = sub.add_parser("roles", parents=[common], help="Manage role profiles (LIB-2)")
+    p.add_argument("roles_cmd", nargs="?", choices=("list", "save", "delete"),
+                   default="list")
+    p.add_argument("profile_id", nargs="?", help="profile id (delete)")
+    p.add_argument("file", nargs="?", help="profile JSON file (save)")
+    p.add_argument("--json", dest="json_out", action="store_true")
+    p.set_defaults(func=cmd_roles)
+
+    p = sub.add_parser("data", parents=[common], help="Data management (SET-2)")
+    p.add_argument("data_cmd", nargs="?", choices=("status", "prune", "delete-all"),
+                   default="status")
+    p.add_argument("--days", type=int, default=None,
+                   help="prune runs older than N days (overrides retention)")
+    p.add_argument("--confirm", action="store_true",
+                   help="required for delete-all")
+    p.set_defaults(func=cmd_data)
+
+    p = sub.add_parser("models", parents=[common],
+                       help="Model lifecycle: list, load, unload (PRV-8)")
+    p.add_argument("models_cmd", nargs="?", choices=("list", "load", "unload"),
+                   default="list")
+    p.add_argument("--provider", default="", help="provider id or name")
+    p.add_argument("--model", default="", help="model id (load/unload)")
+    p.set_defaults(func=cmd_models)
+
+    p = sub.add_parser("diagnostics", parents=[common],
+                       help="Write a redacted diagnostics bundle (OBS-7)")
+    p.add_argument("-o", "--output", default="", help="output file")
+    p.set_defaults(func=cmd_diagnostics)
 
     p = sub.add_parser("serve", parents=[common],
                        help="Serve the engine HTTP API on loopback (spec 7.5)")

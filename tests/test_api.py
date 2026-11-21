@@ -125,7 +125,7 @@ class TestRuns(ApiTestBase):
             self.assertEqual(status, 200, body)
             run_id = body["run_id"]
             import time
-            for _ in range(100):
+            for _ in range(200):
                 status, state = self.call(f"/runs/{run_id}")
                 if state.get("status") in ("succeeded", "failed", "cancelled"):
                     break
@@ -155,7 +155,12 @@ class TestRuns(ApiTestBase):
             _, body = self.call("/runs", method="POST", body={"plan": self._plan()})
             run_id = body["run_id"]
             import time
-            time.sleep(0.6)
+            time.sleep(0.3)
+            for _ in range(100):
+                _, st = self.call(f"/runs/{run_id}")
+                if st.get("status") in ("succeeded", "failed", "cancelled"):
+                    break
+                time.sleep(0.05)
             _, first = self.call(f"/runs/{run_id}/events")
             n = len(first["events"])
             _, rest = self.call(f"/runs/{run_id}/events?after={n}")

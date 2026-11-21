@@ -209,6 +209,18 @@ def make_handler(data_dir: str, token: str):
                     adapter.list_models()[0]["id"] if adapter.list_models() else "")
                 caps = probe_adapter(adapter, model, pid)
                 return self._send(200, caps.to_obj())
+            if len(parts) == 5 and parts[2] == "models" and parts[4] in ("load", "unload") and method == "POST":
+                adapter = build_adapter(profile)
+                model = parts[3]
+                try:
+                    if parts[4] == "load":
+                        adapter.preload(model)
+                    else:
+                        adapter.unload(model)
+                except Exception as exc:  # noqa: BLE001 - ProviderError
+                    raise ApiError(502, "LIFECYCLE", str(exc)) from exc
+                return self._send(200, {"ok": True, "model": model,
+                                        "action": parts[4]})
             if len(parts) == 3 and parts[2] == "models" and method == "GET":
                 try:
                     return self._send(200, {"models": build_adapter(profile).list_models()})

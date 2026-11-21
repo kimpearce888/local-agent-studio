@@ -61,6 +61,7 @@ class MockAdapter(Adapter):
         self.script = list(script or [])
         self.cursor = 0
         self.caps = caps or default_caps()
+        self.loaded_models = {self.caps.model}
         self.requests: list[ChatRequest] = []
         self.chat_calls = 0
 
@@ -84,8 +85,15 @@ class MockAdapter(Adapter):
         caps.model = model
         return caps
 
+    def preload(self, model: str) -> None:
+        self.loaded_models.add(model)
+
+    def unload(self, model: str) -> None:
+        self.loaded_models.discard(model)
+
     def list_models(self) -> list[dict]:
-        return [{"id": self.caps.model or "mock-model", "loaded": True,
+        model = self.caps.model or "mock-model"
+        return [{"id": model, "loaded": model in self.loaded_models,
                  "context_length": self.caps.context_length, "raw": {}}]
 
     def count_tokens(self, messages: list[Message], model: str) -> Optional[int]:

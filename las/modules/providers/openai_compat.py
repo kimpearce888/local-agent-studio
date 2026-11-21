@@ -225,6 +225,38 @@ class ChatCompletionsAdapter(Adapter):
 
     # -- adapter contract -----------------------------------------------------
 
+    def preload(self, model: str) -> None:
+        """Load a model (PRV-8). Only implemented for presets whose server
+        documents lifecycle endpoints (llama.cpp router mode, spec 7.2);
+        LM Studio's native v1 paths are an open item confirmed in Phase 0
+        (spec section 12) and are deliberately not guessed."""
+        paths = getattr(self.preset, "lifecycle_paths", None)
+        if not paths:
+            raise ProviderError(
+                "BAD_REQUEST",
+                "Model load is not available for this server. "
+                "The native endpoints are confirmed in Phase 0 (spec 7.2).")
+        status, body = self.core.request_json(
+            "POST", paths[0], body={"model": model})
+        if status >= 400:
+            raise ProviderError(
+                "SERVER_ERROR", f"The server refused to load {model} "
+                                f"(HTTP {status}).")
+
+    def unload(self, model: str) -> None:
+        paths = getattr(self.preset, "lifecycle_paths", None)
+        if not paths:
+            raise ProviderError(
+                "BAD_REQUEST",
+                "Model unload is not available for this server. "
+                "The native endpoints are confirmed in Phase 0 (spec 7.2).")
+        status, body = self.core.request_json(
+            "POST", paths[1], body={"model": model})
+        if status >= 400:
+            raise ProviderError(
+                "SERVER_ERROR", f"The server refused to unload {model} "
+                                f"(HTTP {status}).")
+
     def list_models(self) -> list[dict]:
         status, body = self.core.request_json("GET", "/v1/models")
         if not isinstance(body, dict) or not isinstance(body.get("data"), list):
@@ -357,6 +389,38 @@ class ResponsesAdapter(Adapter):
                 body[key] = request.params[key]
         body.update(self.preset.extra_body)
         return body
+
+    def preload(self, model: str) -> None:
+        """Load a model (PRV-8). Only implemented for presets whose server
+        documents lifecycle endpoints (llama.cpp router mode, spec 7.2);
+        LM Studio's native v1 paths are an open item confirmed in Phase 0
+        (spec section 12) and are deliberately not guessed."""
+        paths = getattr(self.preset, "lifecycle_paths", None)
+        if not paths:
+            raise ProviderError(
+                "BAD_REQUEST",
+                "Model load is not available for this server. "
+                "The native endpoints are confirmed in Phase 0 (spec 7.2).")
+        status, body = self.core.request_json(
+            "POST", paths[0], body={"model": model})
+        if status >= 400:
+            raise ProviderError(
+                "SERVER_ERROR", f"The server refused to load {model} "
+                                f"(HTTP {status}).")
+
+    def unload(self, model: str) -> None:
+        paths = getattr(self.preset, "lifecycle_paths", None)
+        if not paths:
+            raise ProviderError(
+                "BAD_REQUEST",
+                "Model unload is not available for this server. "
+                "The native endpoints are confirmed in Phase 0 (spec 7.2).")
+        status, body = self.core.request_json(
+            "POST", paths[1], body={"model": model})
+        if status >= 400:
+            raise ProviderError(
+                "SERVER_ERROR", f"The server refused to unload {model} "
+                                f"(HTTP {status}).")
 
     def list_models(self) -> list[dict]:
         status, body = self.core.request_json("GET", "/v1/models")

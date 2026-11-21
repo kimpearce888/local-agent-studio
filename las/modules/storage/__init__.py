@@ -282,6 +282,75 @@ class Store:
         rows = self.db.execute("SELECT obj FROM templates ORDER BY id")
         return [json.loads(r["obj"]) for r in rows]
 
+    # -- role profiles (LIB-2) --------------------------------------------------
+
+    def save_role_profile(self, profile: dict) -> None:
+        self.db.execute(
+            "INSERT INTO role_profiles (id, obj) VALUES (?,?)"
+            " ON CONFLICT(id) DO UPDATE SET obj=excluded.obj",
+            (profile["id"], canonical_json(profile)))
+        self.db.commit()
+
+    def list_role_profiles(self) -> list[dict]:
+        rows = self.db.execute("SELECT obj FROM role_profiles ORDER BY id")
+        return [json.loads(r["obj"]) for r in rows]
+
+    def get_role_profile(self, profile_id: str) -> Optional[dict]:
+        row = self.db.execute(
+            "SELECT obj FROM role_profiles WHERE id=?", (profile_id,)).fetchone()
+        return json.loads(row["obj"]) if row else None
+
+    def delete_role_profile(self, profile_id: str) -> None:
+        self.db.execute("DELETE FROM role_profiles WHERE id=?", (profile_id,))
+        self.db.commit()
+
+    # -- run lifecycle (SET-2 retention) ----------------------------------------
+    # Deleting a run removes its events, files and workspace. User-confirmed
+    # only; never triggered by disablement of a module (RFI section 9).
+
+    def delete_run(self, run_id: str) -> None:
+        self.db.execute("DELETE FROM events WHERE run_id=?", (run_id,))
+        self.db.commit()
+        run_dir = self.run_dir(run_id)
+        if os.path.isdir(run_dir):
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def last_activity(self, run_id: str) -> str:
+        """ISO timestamp of the run's last event (retention reference)."""
+        row = self.db.execute(
+            "SELECT ts FROM events WHERE run_id=? ORDER BY seq DESC LIMIT 1",
+            (run_id,)).fetchone()
+        return row["ts"] if row else ""
+
+    def prune_runs(self, max_age_days: int) -> list[str]:
+        """Delete runs whose last activity is older than ``max_age_days``
+        (spec 6.5 data.retention: 0 means everything)."""
+        import datetime
+        cutoff = (datetime.datetime.now(datetime.timezone.utc)
+                  - datetime.timedelta(days=max_age_days))
+        pruned = []
+        for run_id in self.run_ids():
+            ts = self.last_activity(run_id)
+            if not ts:
+                continue
+            try:
+                when = datetime.datetime.fromisoformat(ts.rstrip("Z"))
+            except ValueError:
+                continue
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=datetime.timezone.utc)
+            if when < cutoff:
+                self.delete_run(run_id)
+                pruned.append(run_id)
+        return pruned
+
+    def delete_all_data(self) -> None:
+        """Delete every run (events + files). Providers, plans, templates,
+        role profiles and settings survive (spec S11: delete all data means
+        runs and workspaces)."""
+        for run_id in self.run_ids():
+            self.delete_run(run_id)
+
     # -- settings (spec 6.5) ---------------------------------------------------
 
     def get_setting(self, key: str, default: Any = None) -> Any:

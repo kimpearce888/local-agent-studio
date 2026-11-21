@@ -56,6 +56,9 @@ class MockServer:
                     outer.recorded.append(json.loads(raw))
                 except json.JSONDecodeError:
                     outer.recorded.append({})
+                if self.path in ("/models/load", "/models/unload"):
+                    self._reply(200, b'{"ok": true}')
+                    return
                 if outer.force_status:
                     self._reply(outer.force_status, b'{"error": {"message": "nope"}}')
                     return

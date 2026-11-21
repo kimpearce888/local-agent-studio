@@ -153,6 +153,34 @@ class TestDisableMock(LifecycleTestBase):
         self.assertTrue(by_id["providers"]["enabled"])
 
 
+class TestEveryModule(LifecycleTestBase):
+    """Generic invariant (RFI section 7): disabling any non-core module
+    blocks its commands with an actionable message, never a crash."""
+
+    def test_disable_blocks_every_non_core_modules_commands(self):
+        registry = ModuleRegistry()
+        for manifest in registry.manifests.values():
+            if manifest.core or not manifest.commands:
+                continue
+            data_dir = os.path.join(self.tmp.name, f"d-{manifest.id}")
+            store = Store(data_dir)
+            set_enabled(registry, manifest.id, False,
+                        store.get_setting, store.set_setting)
+            command = manifest.commands[0].name
+            code, out = self.run_cli_in(data_dir, command)
+            self.assertEqual(
+                code, EXIT_INVALID,
+                f"{manifest.id}: disabling must block '{command}' (got {code})")
+            self.assertIn(manifest.id, out)
+            self.assertIn(f"studio modules enable {manifest.id}", out)
+
+    def run_cli_in(self, data_dir, *argv):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = main([*argv, "--data-dir", data_dir])
+        return code, buf.getvalue()
+
+
 class TestCoreProtection(LifecycleTestBase):
     def test_core_module_cannot_be_disabled(self):
         store = Store(self.data_dir)

@@ -18,7 +18,8 @@ MODULE = ModuleManifest(
     requires=[],
     optional=[],
     default_enabled=True,
-    commands=[CommandSpec("providers", "Manage and test provider profiles")],
-    test_files=["tests/test_adapters.py"],
+    commands=[CommandSpec("providers", "Manage and test provider profiles"),
+              CommandSpec("models", "Model lifecycle: list, load, unload (PRV-8)")],
+    test_files=["tests/test_adapters.py", "tests/test_models.py"],
     compat_shims=[],
 )

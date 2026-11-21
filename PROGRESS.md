@@ -186,6 +186,49 @@ appear in the canonical zone.
 - Verification: full suite PASSED (230 tests); removal tests PASSED for
   reporting, providers.mock, selftest; `python -m las selftest` PASSED.
 
+## Continuation session 2 (2026-11-21, later)
+
+**S7 completed** (f75ad06 + fixes): all 21 legacy re-export shims deleted,
+every test import canonical (18 files rewritten), compat_shims emptied,
+the DEPENDENCY_RULES transition exception retired, R8 redefined as the
+structural "no legacy files under las/" invariant (mutation-tested).
+Findings fixed along the way: the api module's optional reporting import
+needed its `# optional-dep:` marker; API tests had undeclared fixture
+coupling to reporting/providers.mock (now explicit skips + a designed
+409-degradation assertion). Removal tests verified for reporting,
+providers.mock, selftest, api, library and diagnostics.
+
+**P0 features** (LIB-1/LIB-2, OBS-7, SET-2):
+- New `library` module: templates with two seeded built-ins (delete
+  refused with actionable message, duplication supported, plan validation
+  on save, variables extracted), role profiles with validation; `studio
+  templates` and `studio roles` commands.
+- New `diagnostics` module: redacted bundle (goal/titles as length +
+  SHA-256 only, keys never included, providers as id/kind/url/reference
+  flag, module registry state, per-run chain verification);
+  `studio diagnostics` lists contents before writing; nothing is sent.
+- Storage lifecycle: delete_run, prune_runs(max_age_days),
+  delete_all_data (runs only; providers/plans/templates/settings kept),
+  role profile CRUD; `studio data status|prune|delete-all --confirm`.
+
+**PRV-8 model lifecycle** (P1): `studio models list|load|unload` and API
+endpoints. llama.cpp router paths are spec-given (7.2) and implemented
+with wire tests; LM Studio's native paths are a spec open item
+(section 12) and the adapter refuses with that explanation instead of
+guessing; the mock implements in-memory loaded state.
+
+**Generic lifecycle invariant** added to the test suite: disabling ANY
+non-core module must block its commands with the actionable enable
+message (parametrized over the registry, not hardcoded). It caught a real
+gate-ordering regression (export's usage check firing before the
+capability gate) which was fixed; also fixed a MockAdapter init-order bug
+(loaded_models referencing self.caps too early) and an API test poll
+window that flaked under full-suite load.
+
+Verification: full suite PASSED (250 tests; 230 before this session),
+twice for stability; removal tests PASSED for all six modules above;
+`studio selftest` PASSED.
+
 ## Remaining work (honest list)
 
 - S5b CLI command split (context-object redesign).

@@ -19,6 +19,7 @@ class Preset:
     notes: str = ""
     extra_body: dict = field(default_factory=dict)
     supports_lifecycle: bool = False   # preload / unload (PRV-8, P1)
+    lifecycle_paths: tuple[str, str] | None = None   # (load, unload)
     count_tokens_path: str | None = None
     detect_ports: tuple[int, ...] = ()
 
@@ -54,6 +55,7 @@ LLAMA_CPP = Preset(
     auth="optional",
     notes="Router mode adds /models, /models/load and /models/unload.",
     supports_lifecycle=True,
+    lifecycle_paths=("/models/load", "/models/unload"),
     detect_ports=(8080,),
 )
 

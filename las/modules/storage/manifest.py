@@ -15,7 +15,7 @@ MODULE = ModuleManifest(
     requires=[],
     optional=[],
     default_enabled=True,
-    commands=[],
+    commands=[CommandSpec("data", "Data management: status, prune, delete-all")],
     test_files=['tests/test_store_events.py'],
     compat_shims=[],
 )
