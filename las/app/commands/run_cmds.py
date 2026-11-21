@@ -176,22 +176,13 @@ def _drive(engine: Engine, store: Store, run_id: str, registry: ProviderRegistry
 
 def cmd_list(args) -> int:
     engine = Engine(args.data_dir)
-    rows = []
-    for run_id in engine.store.run_ids():
-        try:
-            state = engine.state(run_id)
-        except (ValueError, PlanFormatError):
-            continue
-        if args.status and state.status != args.status:
-            continue
-        rows.append({
-            "run_id": run_id,
-            "title": (state.title or state.plan.title)[:60],
-            "status": state.status,
-            "tasks": f"{sum(1 for t in state.tasks.values() if t.state == 'succeeded')}"
-                     f"/{len(state.plan.tasks)}",
-            "tokens": state.tokens_used(),
-        })
+    # Derived summaries (M1 optimization): a run is replayed only when its
+    # cached summary is stale, so listing stays cheap as history grows.
+    rows = [{"run_id": s["run_id"], "title": s["title"],
+             "status": s["status"],
+             "tasks": f"{s['tasks_done']}/{s['tasks_total']}",
+             "tokens": s["tokens"]}
+            for s in engine.list_summaries(status=args.status or "")]
     if args.json_out:
         _print_json(rows)
         return EXIT_OK

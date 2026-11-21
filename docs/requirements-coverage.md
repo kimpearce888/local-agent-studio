@@ -85,7 +85,7 @@ reason). Verification: the test suite, module-removal tests and
 
 | ID | P | Status | Evidence |
 | --- | --- | --- | --- |
-| OBS-1 | P0 | done | `list` with filters and JSON output |
+| OBS-1 | P0 | done | `list` with filters and JSON output, served from a derived summary table that replays a run only when new events appeared (`tests/test_summary_cache.py`) |
 | OBS-2 | P0 | done | `inspect` per task incl. attempts and raw JSON |
 | OBS-3 | P0 | engine-side | Events carry usage and time-to-first-token; the timeline view is UI |
 | OBS-4 | P0 | done | Markdown/JSON export with provenance and AI notice |

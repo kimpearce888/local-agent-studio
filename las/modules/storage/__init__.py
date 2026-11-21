@@ -106,6 +106,15 @@ class Store:
                 id TEXT PRIMARY KEY, obj TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS role_profiles (
                 id TEXT PRIMARY KEY, obj TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS run_summary (
+                run_id TEXT PRIMARY KEY,
+                updated_seq INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                title TEXT NOT NULL,
+                tasks_total INTEGER NOT NULL,
+                tasks_done INTEGER NOT NULL,
+                tokens INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY, value TEXT NOT NULL);
             """
@@ -310,10 +319,48 @@ class Store:
 
     def delete_run(self, run_id: str) -> None:
         self.db.execute("DELETE FROM events WHERE run_id=?", (run_id,))
+        self.db.execute("DELETE FROM run_summary WHERE run_id=?", (run_id,))
         self.db.commit()
         run_dir = self.run_dir(run_id)
         if os.path.isdir(run_dir):
             shutil.rmtree(run_dir, ignore_errors=True)
+
+    # -- derived run summaries (M1 optimization) ----------------------------
+
+    def summary_stale_seq(self, run_id: str) -> int:
+        """The event seq the cached summary was built from (-1 if absent)."""
+        row = self.db.execute(
+            "SELECT updated_seq FROM run_summary WHERE run_id=?",
+            (run_id,)).fetchone()
+        return row["updated_seq"] if row else -1
+
+    def current_seq(self, run_id: str) -> int:
+        row = self.db.execute(
+            "SELECT MAX(seq) AS m FROM events WHERE run_id=?",
+            (run_id,)).fetchone()
+        return row["m"] or 0
+
+    def get_summary(self, run_id: str) -> Optional[dict]:
+        row = self.db.execute(
+            "SELECT * FROM run_summary WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            return None
+        return {"run_id": row["run_id"], "status": row["status"],
+                "title": row["title"], "tasks_total": row["tasks_total"],
+                "tasks_done": row["tasks_done"], "tokens": row["tokens"]}
+
+    def save_summary(self, run_id: str, updated_seq: int, status: str,
+                     title: str, tasks_total: int, tasks_done: int,
+                     tokens: int) -> None:
+        self.db.execute(
+            "INSERT INTO run_summary (run_id, updated_seq, status, title,"
+            " tasks_total, tasks_done, tokens) VALUES (?,?,?,?,?,?,?)"
+            " ON CONFLICT(run_id) DO UPDATE SET updated_seq=excluded.updated_seq,"
+            " status=excluded.status, title=excluded.title,"
+            " tasks_total=excluded.tasks_total, tasks_done=excluded.tasks_done,"
+            " tokens=excluded.tokens",
+            (run_id, updated_seq, status, title, tasks_total, tasks_done, tokens))
+        self.db.commit()
 
     def last_activity(self, run_id: str) -> str:
         """ISO timestamp of the run's last event (retention reference)."""

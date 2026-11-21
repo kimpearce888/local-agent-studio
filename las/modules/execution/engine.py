@@ -117,6 +117,42 @@ class Engine:
         return {"removed": removed, "pinned": sorted(pinned_ids),
                 "added": [t.id for t in new_objs]}
 
+    def list_summaries(self, status: str = "") -> list[dict]:
+        """History rows for `list` (OBS-1) from the derived summary table.
+
+        A run's summary is replayed once and cached; it refreshes only when
+        new events appeared (staleness is checked by event seq). The
+        replayed state stays the source of truth - this is a cache, not a
+        second ledger.
+        """
+        rows = []
+        for run_id in self.store.run_ids():
+            cached = self.store.get_summary(run_id)
+            if cached is None or self.store.summary_stale_seq(
+                    run_id) < self.store.current_seq(run_id):
+                try:
+                    state = self.state(run_id)
+                except (ValueError, Exception):
+                    continue
+                cached = {
+                    "run_id": run_id,
+                    "status": state.status,
+                    "title": (state.title or state.plan.title)[:60],
+                    "tasks_total": len(state.plan.tasks),
+                    "tasks_done": sum(1 for t in state.tasks.values()
+                                      if t.state == "succeeded"),
+                    "tokens": state.tokens_used(),
+                }
+                self.store.save_summary(
+                    run_id, self.store.current_seq(run_id),
+                    status=cached["status"], title=cached["title"],
+                    tasks_total=cached["tasks_total"],
+                    tasks_done=cached["tasks_done"], tokens=cached["tokens"])
+            if status and cached["status"] != status:
+                continue
+            rows.append(cached)
+        return rows
+
     def edit_task(self, run_id: str, task_id: str, changes: dict,
                   reason: str = "") -> None:
         """Edit a pending task (RUN-6). The edit is an event; replay applies

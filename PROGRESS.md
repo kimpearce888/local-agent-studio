@@ -278,11 +278,34 @@ PASSED for reporting, providers.mock, selftest, api, library, diagnostics,
 telemetry and attachments (planning correctly refuses removal as core);
 `studio selftest` PASSED. All work pushed through 581b2c3.
 
+## Continuation session 4 (2026-11-21, night) - S5b and the summary cache
+
+- **S5b resolved** with the context-object redesign: handlers moved
+  VERBATIM into las/app/commands/ (common.py shared context, six domain
+  modules), cli.py is a 279-line composition root with the backward-compat
+  import surface. The earlier module-owned-file variant stays rejected.
+- **Derived run summaries** (the M1 optimization previously deferred as
+  sandbox-infeasible): storage gains a run_summary table with seq-based
+  staleness; Engine.list_summaries() replays only stale runs and caches
+  the rest; cmd_list output is unchanged. Evidence: 281 tests stayed
+  green through the change; 5 new tests pin the invariants; timing shows
+  warm listings at 0.2 ms vs 5 ms for replay-everything on 20 runs.
+- Verification: 286 tests PASSED; removal tests PASSED (reporting,
+  library, attachments, telemetry, planning-core-refusal unchanged);
+  `studio selftest` PASSED. The one intermittent API test failure under
+  load (test_run_end_to_end_events) passes in isolation - timing, not a
+  regression.
+
 ## Remaining work (honest list)
 
 - M1 items not feasible in this sandbox: nightly contract tests against
   real servers (no LM Studio/Ollama available); the 100-goal benchmark
-  (needs a real model); derived SQL tables optimization.
+  (needs a real model). The derived-summaries optimization is DONE
+  (continuation session 4): a run_summary table caches `list` rows per
+  run, refreshed only when new events appear (staleness by event seq);
+  `list` replays nothing on warm listings (0.2 ms vs 5 ms replay-everything
+  on a 20-run history; the gap grows with history size), delete_run drops
+  the row, and 5 tests pin cache-matches-replay and refresh-on-append.
 - M2 desktop shell: BLOCKED in this environment (no Rust toolchain); the
   engine API it will consume is in place and tested.
 - M3/M4 items still open: MCP client (TLS-6), signed installers (DST-1)
