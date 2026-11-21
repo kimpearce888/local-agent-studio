@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Full test suite (includes architecture and registry checks)
+        run: python -m unittest discover -s tests
+      - name: Disposable module removal tests
+        run: |
+          python tools/removal_test.py reporting
+          python tools/removal_test.py selftest
+          python tools/removal_test.py providers.mock
+      - name: Packaging smoke test
+        run: |
+          pip wheel . --no-deps -w dist/
+          pip install dist/*.whl
+          studio --version
+          python -c "import las; print(las.__version__)"
