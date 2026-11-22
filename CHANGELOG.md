@@ -166,6 +166,47 @@ not follow-ups.
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
 
+## [0.4.5] - 2026-11-22
+
+- **Fixed: the capability probe's tool_calling finding was never wired
+  into the run configuration.**  DriverConfig defaults to native tool
+  calls; the bench, the CLI and the GUI all passed the default
+  through, so against a server that accepts tool defs on the wire but
+  never returns them (the z-ai proxy, toolless Ollama models) the
+  worker received native tool definitions that vanished, never saw the
+  text tool protocol, and had no tool mechanism at all - the root
+  cause behind every "models invent their own tool-call syntax"
+  finding since 0.4.3.  The bench threads caps.tool_calling through
+  every real-run path; the CLI gains `--text-tools`; the GUI gains a
+  tool_mode setting (Settings > Runs).
+- **The text tool parser accepts what real models send.**  The
+  documented form arrived wrapped in wire tags the models drop:
+  measured, the reference model emitted perfect bare one-line JSON and
+  the engine executed none of it.  parse_text_tool_call now accepts
+  bare JSON via a balanced brace scan (never inside a final handoff
+  message), the wrapped form for back-compat, and the two XML idioms
+  models regress to (colon-tag blocks, tool_code blocks including the
+  bare-name form).  Tool results carry a citable
+  `TOOL RESULT (call_N)` id so `tool:` sources are possible at all.
+- **Workspace file tools are the broker baseline.**  The per-task tools
+  list was an exhaustive allowlist; model-written plans under-granted
+  and read_file was denied mid-run (measured: t3 of 8).  Per the PRD's
+  least-agency principle (tools BEYOND workspace files are off until
+  granted), the jailed file tools are allowed by default; shell and
+  web still require the task grant and the run flags.  tool_defs and
+  the Rule-of-Two capability profile use the same effective set.
+- **H-06 accepts verbose path citations** ("workspace file: a.csv") -
+  95% of the model's sources were real existing paths; the prefix
+  spelling killed otherwise perfect handoffs.  WORKER_PROTOCOL v2
+  teaches the accepted source forms and that finishing a task does not
+  resolve a constraint (H-05); the planner prompt now requires
+  granting each task the tools it needs.
+- **Live validation of the fixed chain (glm-4-plus):** csv-summary
+  COMPLETED without help - the first real-model completion of the
+  product's core loop (plan, read workspace files, compute, write
+  deliverables, valid handoffs, multi-task) - and market-brief ended
+  as an honest blocked run.  335 tests, engine gates green.
+
 ## [0.4.4] - 2026-11-22
 
 - **Added: the honest blocker - `blocked` is a first-class terminal run

@@ -506,6 +506,59 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.5 - the tool capability was never wired (the real 0/30 root cause)
+
+Chasing the remaining "models invent their own tool-call syntax"
+wall with live diagnosis (each finding measured, none guessed) peeled
+four layers, and the last one was the true root of the 0/30:
+
+1. **DriverConfig.tool_calling defaults True and nothing wires the
+   probe's finding into it.**  The bench, the CLI and the GUI all
+   passed the default through.  Against the z-ai proxy the worker got
+   native tool defs the proxy silently drops, never saw the text tool
+   protocol, and had NO tool mechanism at all - every "invented
+   syntax" since 0.4.3 was a model improvising in the dark.  Fixed:
+   bench threads caps.tool_calling everywhere; CLI --text-tools; GUI
+   tool_mode setting.
+2. **The text tool parser required wire tags the models drop.**  With
+   text mode actually on, the model emitted perfect bare one-line JSON
+   - the engine executed none of it (0 tool.called).  The parser now
+   accepts bare JSON (balanced brace scan, never inside a final
+   handoff message), the wrapped form for back-compat, and the two
+   measured XML idioms (colon-tag; tool_code, including the bare-name
+   form).  Tool results now carry a citable TOOL RESULT (call_N) id.
+3. **The broker's exhaustive per-task allowlist starved under-granted
+   plans** (read_file denied on t3 of 8; honest blocks "need access to
+   tools to read the sales CSV").  Workspace file tools are now the
+   baseline (PRD least agency: tools BEYOND workspace files are off
+   until granted); shell/web still need the grant.  tool_defs and the
+   Rule-of-Two profile use the same effective set.
+4. **H-06 rejected verbose path citations** ("workspace file: a.csv")
+   while 95% of the model's sources were real existing paths, and
+   H-05 fired because nobody told the model that finishing a task
+   does not resolve a constraint.  _source_ok strips the verbose
+   prefixes and accepts what resolves; WORKER_PROTOCOL v2 teaches
+   sources and constraint states; the planner prompt requires
+   granting each task the tools it needs.
+
+A transport artifact of this sandbox deserves a note: the tool-call
+wire tags are stripped from every file Read and grep output the agent
+sees, which is why the tagged requirement hid in plain sight across
+two sessions of "the parser looks fine".  The debugging scripts that
+finally exposed it (chr-built tag strings, escaped dumps) are kept
+under scripts/ (dump_tag_regions.py, debug_tool_re.py,
+fix_tool_protocol.py) as the recipe for diagnosing anything that
+touches wire markup.
+
+Live validation of the fixed chain (glm-4-plus, csv-summary family):
+COMPLETED WITHOUT HELP - the first real-model completion of the
+product's core loop (plan valid first attempt, real file reads,
+deliverables written, valid handoffs across a multi-task chain) -
+plus an honest blocked market-brief, 0 failures, 0 plan repairs.
+335 tests, engine gates green.  The v0.4.5 reference benchmark
+(10 goals + 2 kills) was launched at session end; see
+bench/results/ for the numbers.
+
 ## Session: v0.4.4 - the honest blocker + benchmark input provisioning
 
 The 0.4.3 reference benchmark (0/30 completed-without-help, every
