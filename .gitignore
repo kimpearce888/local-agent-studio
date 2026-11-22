@@ -11,6 +11,9 @@ venv/
 *.db
 *.db-wal
 *.db-shm
+# Committed test fixture: the Rust migration reader is verified
+# against a real Python-engine run DB (see migration.rs).
+!rust/crates/las-core/tests/fixtures/python_run.db
 data/
 runs/
 logs/
