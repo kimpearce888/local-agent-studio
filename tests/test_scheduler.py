@@ -313,8 +313,10 @@ class TestGates(SchedulerTestBase):
 class TestFailurePolicies(SchedulerTestBase):
     def bad_script(self, plan):
         return [
-            {"text": "I refuse to produce a handoff block."},   # no <handoff>
-            {"text": "Still no handoff."},                      # repair fails
+            {"text": "I refuse to produce a handoff block."},   # nudge 1
+            {"text": "Still no handoff."},                      # nudge 2
+            {"text": "No handoff again."},                      # repair
+            {"text": "And none now."},                          # repair fails
         ]
 
     def test_policy_stop_fails_run(self):

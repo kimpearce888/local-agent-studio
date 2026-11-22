@@ -506,6 +506,60 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.4 - the honest blocker + benchmark input provisioning
+
+The 0.4.3 reference benchmark (0/30 completed-without-help, every
+failure a handoff violation) was diagnosed to its roots and fixed on
+both sides of the contract:
+
+1. **The corpus asked for sourced facts from an empty workspace.**
+   Every serious agent benchmark provisions inputs (GAIA ships
+   attachments, SWE-bench ships the repo); ours asked for "cited
+   figures" with no sources and no web, so an honest model had no
+   legal path to completion - H-06 violations were the model's only
+   route to "done".  Each of the 20 goal families now seeds
+   deterministic synthetic input files into the run workspace
+   (bench/goals.py FIXTURES + seed_workspace) before the run starts;
+   the measured loop is the product's real one: read workspace files,
+   extract file-sourced facts, write deliverables, hand off.
+2. **`blocked` was not a run state.**  A valid blocked handoff was
+   recorded as task.succeeded (inflating the completed metric);
+   silently, a model could "complete" by blocking.  `blocked` is now a
+   first-class terminal run state (events task.blocked + run.blocked);
+   resuming re-attempts the blocked task once the user provides the
+   missing prerequisite; the GUI shows it and allows resume; the bench
+   reports blocked_runs as its own number.  H-02 now enforces the
+   four-field blocker (a blocked handoff must name a blocking open
+   issue with its constraint id - ownership deferral fails
+   validation), and WORKER PROTOCOL v2 teaches the honest exit.
+3. **Two engine traps made verbatim copying unwinnable** (found by
+   live diagnosis, not guessing): the context renderer decorated each
+   constraint with prerequisite/authority/fallback sub-lines, and a
+   model that copied the rendered block verbatim failed H-03 by hash;
+   and a "forgot the <handoff> block" reply consumed the single
+   repair round, so one dropped period later killed the run.  Fixed:
+   the renderer puts the constraint text on its own quoted `text:`
+   line, H-03 strips exactly the engine's own decoration before
+   hashing (anything else still fails), and the no-block nudge has its
+   own budget (2) separate from the handoff repair (1).
+
+Post-fix reference run (glm-4-plus, PARTIAL sample - the session
+budget ended the run at 8 of 12 goals; recovered from the event store
+into bench/results/bench-real-v044-partial.json): 7 runs measured,
+0 completed, 0 blocked, 7 failed (6 HANDOFF-INVALID, 1 LOOP-DETECTED)
+plus 1 plan-invalid.  The honest paths are now REACHABLE - during
+diagnosis a live model produced a fully valid four-field blocked
+handoff with a file-sourced fact (csv-summary family; it failed H-03
+only on the engine's own rendered decoration, which this session then
+fixed) - but no valid handoff survives the measured goals: after the
+no-block nudges the model invents XML tool-call syntax (<tool:read>
+blocks) against the text tool protocol, on every family.  This is the
+same failure class the 0.4.3 session found (<tool_code> YAML), now on
+multi-turn goals, and it is the proxy's non-native-tool limitation,
+not an engine defect: the engine prefers native tool calling whenever
+the capability probe finds it.  326 tests (8 new); engine gates
+green; mock dry-run unchanged (blocked: 0).
+
 ## Session: reference-model benchmark + the three interop findings (0.4.3)
 
 The remaining PRD benchmark gap was the reference-model numbers.  The
@@ -748,8 +802,22 @@ far as physics allows:
 
 ## Exact next engineering action
 
-None blocking.  The P0 scope, the recorded implementable P1 list
-and ALL audit residuals are built, tested and packaged; the three
+None blocking on the engine.  v0.4.4 shipped the honest-blocker
+machinery, the benchmark input provisioning and the two verbatim-copy
+fixes; the open item is a MODEL-side measurement, not engine work:
+
+- rerun the reference benchmark against a provider with NATIVE tool
+  calling (any OpenAI-compatible server with tools - the engine
+  already prefers native tools when the probe finds them).  The z-ai
+  proxy's text tool protocol is the last wall: glm-4-plus, after the
+  no-block nudges, invents XML tool syntax (<tool:read>) on
+  multi-turn research goals.  Everything else in the loop is now
+  measured working: workspace fixtures are read, file-sourced facts
+  validate H-06, and a live model produced a fully valid four-field
+  blocked handoff during diagnosis.
+
+The P0 scope, the recorded implementable P1 list and ALL audit
+residuals are built, tested and packaged; the three
 long-environment-blocked items were resolved as far as this
 sandbox's physics allow:
 

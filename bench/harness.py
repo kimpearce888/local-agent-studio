@@ -30,7 +30,7 @@ def _mock(script):
     return MockAdapter(script)
 from las.shared.plan_contract import Plan
 
-from bench.goals import build_corpus
+from bench.goals import build_corpus, seed_workspace
 
 PRD_TARGETS = {
     "first_attempt_valid": 0.90,
@@ -112,6 +112,14 @@ def _driver(engine: Engine, run_id: str, adapter, config=None):
 
 # -- real-provider corpus ----------------------------------------------------
 
+def _seed(engine, run_id, goal) -> None:
+    """Write the goal's input files into the run workspace (see
+    bench.goals.FIXTURES): the measured loop is read-files -> deliver
+    -> hand off, which is the product's real contract."""
+    from las.modules.security import Workspace
+    seed_workspace(Workspace(engine.store.workspace_dir(run_id)), goal)
+
+
 def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
                     model: str, kills: int = 0) -> dict:
     """The RUN phase against a LIVE model with a known-good plan.
@@ -136,6 +144,7 @@ def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
                        "mock-model").plan(goal.text).plan
         engine = Engine(data_dir)
         run_id = engine.create_run(plan)
+        _seed(engine, run_id, goal)
         registry = ProviderRegistry()
         registry.register(provider_id, adapter)
         driver = engine.driver(run_id, registry,
@@ -208,8 +217,8 @@ def run_corpus_real(data_dir: str, goals, adapter, provider_id: str,
     itself was validated by the mock dry-run."""
     metrics = {"goals": len(goals), "first_attempt_valid": 0,
                "valid_after_repair": 0, "completed_without_help": 0,
-               "gate_pauses": 0, "plan_failures": 0, "run_failures": 0,
-               "repair_rounds": []}
+               "blocked_runs": 0, "gate_pauses": 0, "plan_failures": 0,
+               "run_failures": 0, "repair_rounds": []}
     for idx, goal in enumerate(goals):
         result = Planner(adapter, model,
                          params=params or {"temperature": 0.2,
@@ -228,11 +237,14 @@ def run_corpus_real(data_dir: str, goals, adapter, provider_id: str,
             continue
         engine = Engine(data_dir)
         run_id = engine.create_run(result.plan)
+        _seed(engine, run_id, goal)
         _real_driver(engine, run_id, provider_id, adapter,
                      model).run()
         state = engine.state(run_id)
         if state.status == "succeeded":
             metrics["completed_without_help"] += 1
+        elif state.status == "blocked":
+            metrics["blocked_runs"] += 1
         elif state.status == "paused":
             metrics["gate_pauses"] += 1
         else:
@@ -266,6 +278,7 @@ def kill_cycles_real(data_dir: str, cycles: int, goals, adapter,
         plan = plan_result.plan
         engine = Engine(data_dir)
         run_id = engine.create_run(plan)
+        _seed(engine, run_id, goal)
         driver = _real_driver(engine, run_id, provider_id, adapter,
                               model)
         steps = rng.randint(1, max(1, len(plan.tasks) - 1))
@@ -289,8 +302,8 @@ def run_corpus(data_dir: str, goals=None) -> dict:
     goals = goals if goals is not None else build_corpus()
     metrics = {"goals": len(goals), "first_attempt_valid": 0,
                "valid_after_repair": 0, "completed_without_help": 0,
-               "gate_pauses": 0, "plan_failures": 0, "run_failures": 0,
-               "repair_rounds": []}
+               "blocked_runs": 0, "gate_pauses": 0, "plan_failures": 0,
+               "run_failures": 0, "repair_rounds": []}
     for goal in goals:
         adapter = _mock(planner_script(goal))
         result = Planner(adapter, "mock-model").plan(goal.text)
@@ -304,11 +317,14 @@ def run_corpus(data_dir: str, goals=None) -> dict:
             continue
         engine = Engine(data_dir)
         run_id = engine.create_run(result.plan)
+        _seed(engine, run_id, goal)
         worker = _mock(run_script(result.plan))
         _driver(engine, run_id, worker).run()
         state = engine.state(run_id)
         if state.status == "succeeded":
             metrics["completed_without_help"] += 1
+        elif state.status == "blocked":
+            metrics["blocked_runs"] += 1
         elif state.status == "paused":
             metrics["gate_pauses"] += 1
         else:

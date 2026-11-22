@@ -6,7 +6,7 @@ each run as its own isolated session on a local model server.
 Specification references in docstrings point at docs/product-spec.md.
 """
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 APP_NAME = "LocalAgentStudio"
 SCHEMA_VERSION = 1

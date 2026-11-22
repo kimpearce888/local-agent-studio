@@ -80,11 +80,17 @@ class RunDriver:
         if self.state.status == "queued":
             self.store.append(self.run_id, "run.resumed", {"reason": "started"})
             self.state_refetch()
+        elif self.state.status == "blocked":
+            # Resuming a blocked run re-attempts the blocked task; the
+            # user was expected to provide the missing prerequisite.
+            self.store.append(self.run_id, "run.resumed",
+                              {"reason": "resumed after blocker"})
+            self.state_refetch()
         while True:
             result = self.step()
             results.append(result)
             if result.kind in ("run_succeeded", "run_failed", "gate_waiting",
-                               "paused", "cancelled"):
+                               "paused", "cancelled", "run_blocked"):
                 break
             if result.kind == "task_failed":
                 break                      # policy=ask paused the run; policy handled inside
@@ -96,13 +102,14 @@ class RunDriver:
             self.store.append(self.run_id, "run.cancelled", {"reason": "user"})
             self.state_refetch()
             return StepResult("cancelled")
-        if st.status in ("succeeded", "failed", "cancelled"):
+        if st.status in ("succeeded", "failed", "cancelled", "blocked"):
             # Map to the run_* kinds run() breaks on.  Returning the raw
             # status "failed" made run() spin forever appending results
             # (found by the real-model worker benchmark: the OOM kill at
             # ~3GB was this loop, not the attempt machinery).
             label = ("run_succeeded" if st.status == "succeeded" else
-                     "run_failed" if st.status == "failed" else "cancelled")
+                     "run_failed" if st.status == "failed" else
+                     "run_blocked" if st.status == "blocked" else "cancelled")
             return StepResult(label, code=st.failure_code)
         if st.status == "paused":
             return StepResult("paused", detail=st.paused_reason)
@@ -206,7 +213,9 @@ class RunDriver:
             if outcome.ok:
                 usage_total["duration_ms"] = int(
                     (self.config.clock() - task_start) * 1000)
-                self._record_success(task, outcome, usage_total)
+                blocked = self._record_success(task, outcome, usage_total)
+                if blocked is not None:
+                    return blocked
                 if self._pause_after == task.id:
                     self.store.append(self.run_id, "run.paused",
                                       {"reason": f"pause after {task.id}"})
@@ -266,7 +275,12 @@ class RunDriver:
         self.state_refetch()
         return StepResult("task_failed", task.id, code=code, usage=usage)
 
-    def _record_success(self, task: Task, outcome: AttemptOutcome, usage: dict) -> None:
+    def _record_success(self, task: Task, outcome: AttemptOutcome,
+                        usage: dict) -> Optional[StepResult]:
+        """Record a valid handoff.  Returns a ``run_blocked`` step when the
+        handoff carries a blocking open issue (the four-field blocker,
+        spec 5.5): the task stopped honestly, so the run blocks instead
+        of failing, and resuming re-attempts this task."""
         handoff = outcome.handoff
         # The engine fills missing deliverable hashes (H-07 verifies the rest).
         workspace = self._workspace()
@@ -290,9 +304,22 @@ class RunDriver:
             self.store.append(self.run_id, "constraint.released", {
                 "constraint_id": hc.id, "authority": hc.authority,
                 "evidence": ev.get("ref", ""), "task_id": task.id})
+        blockers = [i for i in handoff.open_issues if i.blocking]
+        if blockers:
+            self.store.append(self.run_id, "task.blocked", {
+                "task_id": task.id, "code": "BLOCKED", "usage": usage,
+                "issues": [{"issue": i.issue, "constraint_id": i.constraint_id}
+                           for i in blockers]})
+            self.store.append(self.run_id, "run.blocked", {
+                "code": "BLOCKED", "reason": blockers[0].issue,
+                "task_id": task.id, "usage": usage})
+            self.state_refetch()
+            return StepResult("run_blocked", task.id, code="BLOCKED",
+                              usage=usage)
         self.store.append(self.run_id, "task.succeeded", {
             "task_id": task.id, "code": "ok", "usage": usage})
         self.state_refetch()
+        return None
 
     # -- internals: one attempt ---------------------------------------------------
 

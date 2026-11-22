@@ -15,11 +15,13 @@ from las.shared.events_contract import Event
 from las.shared.plan_contract import Plan, task_from_obj
 from las.modules.storage import Store
 
-RUN_STATES = ("queued", "running", "paused", "succeeded", "failed", "cancelled")
+RUN_STATES = ("queued", "running", "paused", "succeeded", "failed",
+              "blocked", "cancelled")
 TASK_STATES = ("pending", "ready", "stale", "awaiting_approval", "running",
-               "succeeded", "failed", "skipped")
+               "succeeded", "failed", "skipped", "blocked")
 
-ACTIONABLE_STATES = ("pending", "ready", "awaiting_approval", "failed")
+ACTIONABLE_STATES = ("pending", "ready", "awaiting_approval", "failed",
+                     "blocked")
 
 
 @dataclass
@@ -264,6 +266,13 @@ def replay(store: Store, run_id: str, plan: Plan,
             _end_attempt(ts, str(p.get("code", "")))
         elif ev.type == "task.skipped":
             _task(state, p).state = "skipped"
+        elif ev.type == "task.blocked":
+            # A blocking open issue stopped the task (spec 5.5): the
+            # handoff is valid but names an unsatisfied prerequisite.
+            ts = _task(state, p)
+            ts.state = "blocked"
+            ts.usage = _sum_usage(ts.usage, p.get("usage") or {})
+            _end_attempt(ts, "BLOCKED")
         elif ev.type == "constraint.released":
             state.constraints[str(p.get("constraint_id", ""))] = (
                 "resolved", str(p.get("task_id", "")))
@@ -285,6 +294,11 @@ def replay(store: Store, run_id: str, plan: Plan,
         elif ev.type == "run.failed":
             state.status = "failed"
             state.failure_code = str(p.get("code", ""))
+        elif ev.type == "run.blocked":
+            # Honest stop (spec 5.5): a task reported a blocking open
+            # issue; the run waits for the prerequisite, it did not fail.
+            state.status = "blocked"
+            state.failure_code = str(p.get("reason", "BLOCKED"))
     if state is None:
         raise ValueError(f"no events for run {run_id}")
     state.events = events

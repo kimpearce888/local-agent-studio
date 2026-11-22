@@ -229,6 +229,14 @@ def validate_handoff(
         issues.append(ValidationIssue(
             "H-02", f"The handoff status {handoff.status!r} is not one of done, partial, blocked.",
             task.id))
+    elif handoff.status == "blocked" and not any(
+            i.blocking for i in handoff.open_issues):
+        # The four-field blocker (spec 5.5): a blocked stop status must
+        # name its blocker - a blocking open issue carrying its
+        # constraint id and prerequisite - or it is ownership deferral.
+        issues.append(ValidationIssue(
+            "H-02", "A blocked handoff must name a blocking open issue "
+            "(with its constraint_id) as its blocker.", task.id))
 
     # H-08: summary length
     if len(handoff.summary.split()) > MAX_SUMMARY_WORDS:
@@ -245,7 +253,8 @@ def validate_handoff(
             issues.append(ValidationIssue(
                 "H-03", f"The handoff dropped constraint {cid}.", task.id, cid))
             continue
-        if constraint_hash(given[cid].text) != constraint_hash(plan_c.text):
+        if constraint_hash(_strip_rendered_decoration(
+                given[cid].text, plan_c)) != constraint_hash(plan_c.text):
             issues.append(ValidationIssue(
                 "H-03", f"Constraint {cid} was reworded; it must be copied verbatim.", task.id, cid))
 
@@ -332,6 +341,53 @@ def validate_handoff(
 
 def cid_of(plan: Plan, constraint_id: str) -> str:
     return constraint_id
+
+
+# The context renderer (context._constraint_line) decorates each
+# constraint with a [id] (state: ...) header, a "text:" line and
+# prerequisite/authority/fallback sub-lines.  A model that copies the
+# rendered block verbatim includes that decoration; H-03 must not fail
+# it for copying what the engine itself rendered.  Strip exactly the
+# engine's decoration - nothing else; any other change still fails.
+_HEADER_RE_CACHE: dict = {}
+
+
+def _strip_rendered_decoration(text: str, ref) -> str:
+    """Recover the bare constraint text from a copy of the rendered
+    context block: the [id] (state: ...) header, a ``text:`` prefix and
+    surrounding quotes, and trailing prerequisite/authority/fallback
+    sub-lines whose values equal the plan's own fields."""
+    lines = text.split("\n")
+    rx = _HEADER_RE_CACHE.get(ref.id)
+    if rx is None:
+        rx = re.compile(r"^\s*\[" + re.escape(ref.id)
+                        + r"\]\s*\(state:\s*\w+\)\s*")
+        _HEADER_RE_CACHE[ref.id] = rx
+    if lines and rx.match(lines[0]):
+        lines[0] = rx.sub("", lines[0])
+        if not lines[0].strip():
+            lines.pop(0)
+    if lines:
+        first = lines[0].strip()
+        m = re.match(r'^text:\s*"(.*)"\s*$', first, re.DOTALL)
+        if m:
+            lines[0] = m.group(1)
+        elif first.startswith("text:"):
+            lines[0] = first[len("text:"):].strip().strip('"')
+    fields = []
+    if getattr(ref, "prerequisite", None):
+        fields.append(f"prerequisite: {ref.prerequisite}")
+    if getattr(ref, "authority", None):
+        fields.append(f"authority: {ref.authority}")
+    if getattr(ref, "fallback", None):
+        fields.append(f"fallback while unresolved: {ref.fallback}")
+    while lines:
+        last = lines[-1].strip()
+        if last in fields:
+            lines.pop()
+        else:
+            break
+    return "\n".join(lines)
 
 
 def _source_ok(source: str, workspace) -> bool:

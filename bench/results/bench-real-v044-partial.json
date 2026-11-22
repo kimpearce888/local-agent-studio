@@ -1,0 +1,54 @@
+{
+  "provider": {
+    "id": "zai",
+    "model": "glm-4-plus",
+    "note": "PARTIAL sample - session budget ended the run before the corpus/kills finished; per-goal outcomes recovered from the event store"
+  },
+  "recovered_at": "2026-11-22T18:54:22.598013+00:00",
+  "measured_goals": 7,
+  "outcomes": {
+    "completed_without_help": 0,
+    "blocked_honest": 0,
+    "failed": 7
+  },
+  "per_run": [
+    {
+      "run": "run-20261122-184322-438d8ef2172c",
+      "outcome": "failed"
+    },
+    {
+      "run": "run-20261122-184455-4b05dc73ab4a",
+      "outcome": "failed"
+    },
+    {
+      "run": "run-20261122-185139-22334dccd0d4",
+      "outcome": "failed"
+    },
+    {
+      "run": "run-20261122-185211-de2719fcedc2",
+      "outcome": "failed"
+    },
+    {
+      "run": "run-20261122-185241-e579548f3ad8",
+      "outcome": "failed"
+    },
+    {
+      "run": "run-20261122-185318-0d975d4a5a5f",
+      "outcome": "failed"
+    },
+    {
+      "run": "run-20261122-184626-9e174b68502d",
+      "outcome": "failed"
+    }
+  ],
+  "harness_log_tail": [
+    "goal 1/12 [gated] failed (96s)",
+    "goal 2/12 [gated] failed (154s)",
+    "goal 3/12 [gated] failed (264s)",
+    "goal 4/12 [gated] plan-invalid (520s)",
+    "goal 5/12 [clean] failed (556s)",
+    "goal 6/12 [clean] failed (589s)",
+    "goal 7/12 [clean] failed (621s)",
+    "goal 8/12 [clean] failed (661s)"
+  ]
+}

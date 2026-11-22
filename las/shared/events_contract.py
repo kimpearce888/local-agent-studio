@@ -19,8 +19,8 @@ EVENT_TYPES = (
     "handoff.recorded", "handoff.edited",
     "constraint.released",
     "task.edited", "plan.replanned", "support.usage",
-    "task.succeeded", "task.failed", "task.skipped",
-    "run.succeeded", "run.failed", "run.hook.executed",
+    "task.succeeded", "task.failed", "task.skipped", "task.blocked",
+    "run.succeeded", "run.failed", "run.blocked", "run.hook.executed",
 )
 
 

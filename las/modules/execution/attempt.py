@@ -83,6 +83,7 @@ def run_attempt(d, task: Task, attempt_no: int, temperature: float) -> AttemptOu
     tool_names_called: set[str] = set()
     repaired_tool_call = False
     repaired_handoff = False
+    no_block_nudges = 0
 
     def log_message(message: Message, extra_tokens: int = 0):
         entry = {"ts": _now_iso(), "role": message.role, "content": message.content,
@@ -248,6 +249,21 @@ def run_attempt(d, task: Task, attempt_no: int, temperature: float) -> AttemptOu
             user_approvals=set(st.approved_gates))
         issues = validate_handoff(handoff, task, st.plan, d._workspace(), evidence)
         if issues:
+            # A reply with no <handoff> block at all is not a failed
+            # handoff - it is a missing one.  Nudging for it has its own
+            # small budget so it never consumes the single repair round
+            # a real handoff may need (found by the reference-model
+            # benchmark: the model's reasoning turn burned the repair,
+            # then one dropped period killed the run).
+            if handoff is None and no_block_nudges < 2:
+                no_block_nudges += 1
+                messages.append(Message(
+                    "user",
+                    "That message had no <handoff> block, so it cannot be "
+                    "recorded as the task result. Reply again with your final "
+                    "message ending with the <handoff> JSON block."))
+                log_message(messages[-1])
+                continue
             if repaired_handoff:
                 return AttemptOutcome(False, "HANDOFF-INVALID", "terminal",
                                       attempt_id=attempt_id, final_text=text,

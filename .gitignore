@@ -25,3 +25,6 @@ backups/
 .DS_Store
 rust/target/
 dist/
+
+# Local SDK symlink for the z-ai reference proxy (bun global)
+node_modules

@@ -26,7 +26,7 @@ COLUMNS = [
     ("tokens", "Tokens", 80, False),
     ("started", "Started", 150, False),
 ]
-STATUS_ORDER = ["succeeded", "failed", "running", "paused",
+STATUS_ORDER = ["succeeded", "failed", "blocked", "running", "paused",
                 "awaiting_approval", "cancelled", "queued"]
 
 
@@ -126,6 +126,7 @@ class RunsScreen(ttk.Frame):
         # via the icon+text pattern directly in the cell text.
         self.tree.tag_configure("succeeded", foreground=self.theme.c["success"])
         self.tree.tag_configure("failed", foreground=self.theme.c["danger"])
+        self.tree.tag_configure("blocked", foreground=self.theme.c["warning"])
         self.tree.tag_configure("running", foreground=self.theme.c["info"])
         self.tree.tag_configure("paused", foreground=self.theme.c["warning"])
         self.tree.tag_configure("awaiting_approval",
@@ -301,8 +302,8 @@ class RunsScreen(ttk.Frame):
         if not run_id:
             return
         state = self.app.engine.state(run_id)
-        if state.status not in ("paused", "failed", "awaiting_approval"):
-            self.app.live.configure(text="Only paused or failed runs can resume")
+        if state.status not in ("paused", "failed", "blocked", "awaiting_approval"):
+            self.app.live.configure(text="Only paused, failed or blocked runs can resume")
             return
         self.app.open_run(run_id, resume=True)
 

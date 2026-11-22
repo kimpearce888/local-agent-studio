@@ -135,7 +135,8 @@ def _run_real(args, data_dir: str) -> int:
           f" (PRD >= 99% is a REFERENCE-model target)")
     print(f"  mean repair rounds:   {c['mean_repair_rounds']}")
     print(f"  done without help:    {c['completed_without_help']}/{c['goals']}"
-          f"  [gate pauses: {c['gate_pauses']}, "
+          f"  [blocked: {c.get('blocked_runs', 0)}, "
+          f"gate pauses: {c['gate_pauses']}, "
           f"plan failures: {c['plan_failures']}, "
           f"run failures: {c['run_failures']}]")
     print(f"Forced kills: {k['resumed_ok']}/{k['cycles']} resumed cleanly"
@@ -197,7 +198,8 @@ def main(argv=None) -> int:
           f"  ({c['valid_after_repair'] / c['goals']:.0%}, PRD >= 99%)")
     print(f"  done without help:    {c['completed_without_help']}/{c['goals']}"
           f"  ({c['completed_without_help'] / c['goals']:.0%}, PRD >= 85%)"
-          f"  [gate pauses: {c['gate_pauses']}]")
+          f"  [blocked: {c.get('blocked_runs', 0)}, "
+          f"gate pauses: {c['gate_pauses']}]")
     print(f"Forced kills: {k['resumed_ok']}/{k['cycles']} resumed cleanly"
           f"  (PRD >= 99%)")
     cap = report["cap"]

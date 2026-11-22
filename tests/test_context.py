@@ -38,8 +38,8 @@ class TestBlockOrder(ContextTestBase):
         self.assertIn("WORKER PROTOCOL", system)
         self.assertIn("BINDING CONSTRAINTS", system)
         # Constraints copied verbatim with their metadata.
-        self.assertIn("[c1] (state: active) You must cite every figure.", system)
-        self.assertIn("[c2] (state: active) Never invent numbers.", system)
+        self.assertIn('[c1] (state: active)\n  text: "You must cite every figure."', system)
+        self.assertIn('[c2] (state: active)\n  text: "Never invent numbers."', system)
 
     def test_user_message_blocks_in_order(self):
         ctx = self.assemble("t2", handoffs={"t1": _handoff("t1", "CANARY-XYZ in summary")})
@@ -106,7 +106,7 @@ class TestBudgetAndCompaction(ContextTestBase):
         # The summary was replaced by the shortened one.
         self.assertIn("short summary", ctx.messages[1].content)
         # Constraint text is never compacted away.
-        self.assertIn("[c1] (state: active) You must cite every figure.",
+        self.assertIn('[c1] (state: active)\n  text: "You must cite every figure."',
                       ctx.messages[0].content)
 
     def test_compaction_step2_moves_facts(self):

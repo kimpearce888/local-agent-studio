@@ -166,6 +166,50 @@ not follow-ups.
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
 
+## [0.4.4] - 2026-11-22
+
+- **Added: the honest blocker - `blocked` is a first-class terminal run
+  state.**  A valid handoff whose status is `blocked`, or that carries
+  a blocking open issue, now stops the run as `blocked` (events
+  `task.blocked` + `run.blocked`) instead of silently counting as
+  `task.succeeded`, which had inflated the completed metric; resuming a
+  blocked run re-attempts the blocked task once the user has provided
+  the missing prerequisite.  The four-field blocker pattern (stop
+  status, prerequisite, authority, fallback - PRD research table, arXiv
+  2608.24569) is enforced by code: H-02 now rejects a blocked handoff
+  that does not name a blocking open issue with its constraint id -
+  ownership deferral fails validation instead of passing silently.
+- **Worker protocol v2 teaches the honest exit.**  The reference-model
+  benchmark measured 0/30 completed-without-help with every failure a
+  handoff violation, most tellingly H-06 (invented unsourced facts):
+  the corpus asked for sourced figures while the workspace was empty,
+  so an honest model had no legal path to completion.  The protocol now
+  states that every fact must come from a workspace file, an input
+  handoff or a tool result, and spells out the blocked pattern as the
+  alternative to faking completion.
+- **Fixed: two engine traps made verbatim constraint copying
+  unwinnable** (found by live diagnosis of the reference run).  The
+  context renderer decorated each constraint with
+  prerequisite/authority/fallback sub-lines and a model that copied
+  the rendered block verbatim failed H-03 by hash; the renderer now
+  puts the text on its own quoted `text:` line and H-03 strips exactly
+  the engine's own decoration before hashing (any real rewording still
+  fails).  And a reply without a `<handoff>` block consumed the single
+  repair round, so a later dropped period killed the run; the no-block
+  nudge now has its own budget (2) separate from the handoff repair
+  (1).
+- **Benchmark: every corpus family provisions its input files.**  Like
+  every credible agent benchmark (GAIA ships attachments, SWE-bench
+  ships the repo), each of the 20 goal families now seeds deterministic
+  synthetic input files into the run workspace (sales CSV, meeting
+  notes, source excerpts, a module to review, a policy to summarize...)
+  before the run starts, so the measured loop is the product's real
+  one: read the workspace, extract file-sourced facts, write
+  deliverables, hand off.  The harness reports `blocked_runs` as its
+  own number alongside completed / gate-paused / failed.  324 tests
+  (6 new: blocker validation, blocked-run lifecycle, resume-after-block,
+  fixture determinism, mock corpus shape).
+
 ## [0.4.3] - 2026-11-22
 
 - **Fixed: the capability probe under-reported json_schema for models
