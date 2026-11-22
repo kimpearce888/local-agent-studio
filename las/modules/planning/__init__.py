@@ -21,7 +21,7 @@ from las.modules.handoffs import strip_code_fences
 from las.modules.planquality import validate_plan
 from las.shared.plan_contract import (
     Constraint, GRANULARITY_TASK_COUNTS, DEFAULT_TOOLS, Plan, PlanFormatError,
-    Task, ValidationIssue, task_from_obj,
+    ROLES, TASK_TYPES, Task, ValidationIssue, task_from_obj,
 )
 from las.shared.tool_catalog import KNOWN_TOOLS
 
@@ -62,13 +62,13 @@ PLAN_JSON_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "type": {"type": "string"},
+                    "type": {"type": "string", "enum": list(TASK_TYPES)},
                     "title": {"type": "string"},
                     "instructions": {"type": "string"},
                     "needs": {"type": "array", "items": {"type": "string"}},
                     "expected_output": {"type": "string"},
                     "constraints": {"type": "array", "items": {"type": "string"}},
-                    "role": {"type": "string"},
+                    "role": {"type": "string", "enum": list(ROLES)},
                     "tools": {"type": "array", "items": {"type": "string"}},
                     "gate_before": {"type": "boolean"},
                 },

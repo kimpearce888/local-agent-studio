@@ -703,7 +703,7 @@ fn settings_screen_reports_real_diagnostics() {
     });
     h.run();
     h.get_all(by().label("Desktop version")).next().unwrap();
-    h.get_all(by().label("0.4.0")).next()
+    h.get_all(by().label(env!("CARGO_PKG_VERSION"))).next()
         .expect("the shipped version is displayed");
     h.get_all(by().label_contains("quick_check: ok")).next()
         .expect("the integrity check runs and reports ok");

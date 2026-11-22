@@ -106,6 +106,14 @@ not follow-ups.
   rules are now: parent must exist, and the parent CHAIN must be
   acyclic (walked with a seen-set, self-parent included) and
   shallower than 64 levels as a sanity guard.
+- **Plan wire schema now declares the role/type enums** (production
+  fix found by the real-model benchmark): PLAN_JSON_SCHEMA sent
+  `"role": {"type": "string"}` while the validator enforces
+  ROLES/TASK_TYPES - so json_schema-capable servers could not
+  grammar-constrain them and models invented roles like
+  'researcher' (V-01 repair rounds that never converge).  The
+  schema and the validator now agree; any provider that honors
+  response_format rejects invalid values at generation time.
 - **Real-server capability tests + real-model benchmark wiring**:
   `python -m bench --provider <preset> --model <id>` runs the
   capability probe against a LIVE OpenAI-compatible server first
@@ -157,6 +165,28 @@ not follow-ups.
   (and labels the basis - conservative, confirmed-safe, or
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
+
+## [0.4.1] - 2026-11-22
+
+The real-model benchmark session made the product better; this
+release ships what it found.
+
+- **Plan wire schema declares the role/type enums** (see above for
+  the full entry): the schema the planner sends now agrees with the
+  validator, so json_schema-capable servers grammar-constrain
+  invalid values at generation time instead of burning repair
+  rounds that never converge.
+- **`python -m bench --provider <preset> --model <id>` runs the
+  benchmark against a LIVE model server** - capability probe first
+  (its findings drive the planner configuration, like the app's
+  setup flow), then the corpus and kill/resume cycles with no
+  scripted replies; `run_worker_real` decomposes the run phase for
+  models that cannot plan.
+- **Versions unified at 0.4.1** across pyproject.toml,
+  `las.__version__`, the Cargo workspace and the artifact filename
+  checks; the settings-screen UI test now asserts the version from
+  `CARGO_PKG_VERSION` (same source the app renders) instead of a
+  hardcoded number that broke on every bump.
 
 ## [0.4.0] - 2026-11-21
 

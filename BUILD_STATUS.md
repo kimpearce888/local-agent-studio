@@ -634,18 +634,25 @@ far as physics allows:
 
 ## Exact next engineering action
 
-None blocking - the P0 scope, the recorded implementable P1 list
-AND the former audit residuals are all built, tested and packaged:
-session rollover (9.4), the full MCP client (stdio + Streamable
-HTTP + dynamic tool schemas in the model context, 13.2), Landlock
-run_command (13.4, audit item 10), versioned artifacts (10),
-provider-exact token accounting (9.3), and audit items 13/14.  The
-ONLY remaining items are the environment-blocked verifications:
-real-server capability tests and the real-model benchmark (audit
-items 19/20 - harnesses shipped, they need a model server to point
-at), and the final privileged install steps - `dpkg -i` (root) and
-a FUSE-mounted AppImage launch on a target machine; everything
-short of those two steps is now verified, by CI on the build
-runner AND by download-back on a different distro, including the
-GUI actually running.  A tokenizer dependency would only ever be wanted
-beyond the provider-exact counting already in place.
+None blocking.  The P0 scope, the recorded implementable P1 list
+and ALL audit residuals are built, tested and packaged; the three
+long-environment-blocked items were resolved as far as this
+sandbox's physics allow:
+
+- real-server capability tests (audit 19): DONE against a live
+  user-mode ollama server (see the session section above);
+- real-model benchmark (audit 20): the official run measured
+  (bench-real-20261122T113803Z.json), the plan wire schema now
+  declares role/type enums (the fix the benchmark surfaced), and
+  the worker-phase decomposition + the enum-fixed model retest are
+  the measurements in flight this session;
+- privileged install: verified rootless end to end (dpkg --root,
+  installed-binary smoke, desktop-file-validate, AppImage
+  --appimage-extract-and-run).
+
+What genuinely remains for a human with the target machine:
+`sudo dpkg -i` / the FUSE-mounted AppImage launch (root + /dev/fuse,
+which this sandbox physically lacks), and the PRD reference-model
+benchmark numbers (they need the external reference endpoint; the
+pipeline that will produce them is now proven end to end against a
+real server).
