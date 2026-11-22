@@ -208,6 +208,33 @@ under grants `mcp:<server>` (the whole server) or
 the built-in tools, subject to the server's own fail-closed
 `allow_tools` list.  Tool results are always labelled UNTRUSTED
 content with the origin server named, and connections, restarts and
-calls are audited like every other tool decision.  The transport is
-stdio (a local child process speaking JSON-RPC); Streamable HTTP
-for remote servers is not implemented yet.
+calls are audited like every other tool decision.  A server is configured
+with a command line and an id (stdio: a local child process) or
+with a URL (Streamable HTTP: a remote endpoint - the session
+header is captured at initialize and sent on every request, and
+both plain JSON and SSE responses are understood).
+
+Local command execution (`run_command`) runs explicit argument
+arrays - never a shell string - inside a Landlock sandbox: the
+agent's workspace is the only writable root, system directories
+are readable and executable, and nothing else is.  Every run is
+time-limited (the whole process tree is killed on timeout),
+resource-limited, output-capped and audited, and the executable
+must be on the agent's `command_allowlist` (empty = nothing may
+run).  On kernels without Landlock the command REFUSES to run -
+fail closed, never silently unsandboxed.
+
+Registered artifacts are versioned references to workspace files:
+each registration of the same logical id appends the next version
+with a fresh sha256, ownership and provenance are recorded, an
+optional project scope shares the LISTING with project members
+(never the jail), `export` copies hash-verified bytes into another
+agent's workspace, preview shows the current content capped at
+8 KB, and deletion removes the reference (the agent's own file
+stays).  The Artifacts screen does all of this on real data.
+
+Token accounting is honest about its basis: every model call's
+EXACT provider token counts are persisted, and the context budget
+calibrates against them - shrinking when the provider counts more
+than the estimate, labelling the basis, never claiming an estimate
+is exact (mandate 9.3).

@@ -61,11 +61,19 @@ reference and migration source, kept runnable for parity tests.
   them needs root/FUSE on the target machine - environment-blocked
   here, recorded honestly.  Versions unified at 0.4.0.  The
   14-area desktop shell is complete (14/14 live, kittest-verified).
-- Landlock sandboxing for run_command (audit item 10), MCP
-  Streamable HTTP transport and dynamic tool-schema injection (the
-  stdio MCP client core is IN: configs, approval-before-connection,
-  allowlists, grants, audit, untrusted labelling), recursive module
-  registry (item 14).  Context rollover is IN (session segments,
+- Landlock run_command is IN (sandbox.rs: argv arrays, jail-only
+  writes, rlimits, process-tree timeout kill, command allowlist,
+  FAILS CLOSED on kernels without Landlock - this sandbox's 5.10
+  kernel tests that path, CI's 6.x kernels test the confinement).
+  MCP stdio AND Streamable HTTP transports are IN (approval before
+  connection, allowlists, grants, audit, untrusted labelling);
+  dynamic MCP tool-schema injection into model turns is not.
+  Versioned artifacts are IN (registry + export + Artifacts screen).
+  Provider-exact token accounting is IN (token_usage +
+  context::calibrate).  Still open: the environment-blocked
+  verifications (audit items 19/20, install-testing) and the
+  deferred Python registry recursion (#14) and Rust credentials
+  serializer audit residual (#13).  Context rollover is IN (session segments,
   continuity summaries, restore); a model-generated summary layer
   would ride the provider adapters when a server is configured.
 - Real-server capability tests and real-model benchmark (items 19,

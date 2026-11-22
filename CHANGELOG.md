@@ -48,9 +48,48 @@ not follow-ups.
   grants use `mcp:<server>` (whole server) or
   `mcp:<server>:<tool>` through the same broker (ask-modes route
   through the approval gate), every result is labelled UNTRUSTED
-  content, and connect/restart/call outcomes are audited.  Not yet:
-  Streamable HTTP transport and dynamic tool-schema injection into
-  model turns.
+  content, and connect/restart/call outcomes are audited.
+- **MCP Streamable HTTP transport**: configs with a `url` connect
+  over HTTP instead of spawning a process - initialize handshake
+  with `Mcp-Session-Id` capture (the session header is sent on
+  every later request; the test server refuses without it),
+  `application/json` and `text/event-stream` (SSE) response
+  parsing, 202-accepted notifications, per-call error marking with
+  reconnect on next use.  `url` and `command` are mutually
+  exclusive, validated at upsert.  Not yet: dynamic MCP tool-schema
+  injection into model turns.
+- **Artifacts as versioned first-class entities (mandate 10)**: an
+  `artifacts` registry with logical ids and monotonically allocated
+  versions, sha256 hashes, agent ownership, JSON provenance,
+  optional project sharing, capped previews, and deletion (the
+  reference goes; the owner's workspace file stays).  Sharing never
+  bypasses the jail: `export_artifact` COPIES verified bytes
+  (hash-checked against registration) into the recipient's own
+  workspace.  The Artifacts screen now lists registered artifacts
+  with owner/project/version/size/hash, previews them, and
+  registers/deletes via real buttons (kittest-verified).
+- **Landlock-sandboxed run_command (mandate 13.4)**: a new broker
+  tool executing explicit ARGUMENT ARRAYS (never shell strings)
+  inside a Landlock sandbox - the agent's workspace jail is the
+  only writable root, system directories are read/execute, applied
+  via raw syscalls in pre_exec with PR_SET_NO_NEW_PRIVS.  Limits:
+  wall-clock timeout with process-tree cancellation (setsid +
+  group SIGKILL), CPU/address-space/file-size/no-file rlimits,
+  64 KB output cap.  Command policy from profile params
+  (`command_allowlist`, fail-closed when empty).  FAILS CLOSED on
+  kernels without Landlock (this build sandbox's 5.10 kernel
+  exercises exactly that path; CI's 6.x kernels exercise the real
+  confinement: in-jail writes succeed, escapes and outside reads
+  are refused, timeouts kill the tree).
+- **Provider-exact token accounting (mandate 9.3)**: every model
+  call's EXACT provider token counts (usage.prompt_tokens /
+  completion_tokens) are persisted in `token_usage` next to the
+  pre-call chars/4 estimate of the same request, and
+  `context::calibrate` uses the latest observation to shrink the
+  context budget when the provider counts more than the estimate
+  (and labels the basis - conservative, confirmed-safe, or
+  calibrated - never pretending an estimate is exact).  Verified
+  end to end against a real local HTTP endpoint returning usage.
 
 ## [0.4.0] - 2026-11-21
 

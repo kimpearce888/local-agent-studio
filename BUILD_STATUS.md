@@ -433,15 +433,64 @@ Test totals this session: Rust 112 green (87 las-core lib incl. 8
 sessions + 10 mcp, 6 acceptance, 19 kittest UI; workspace
 `--locked`), Python unchanged (314 at c0fadf9).
 
+## Session: the four implementable P1 items (after 9cb4134)
+
+- **Artifacts as versioned first-class entities (mandate 10)**:
+  `las-core/src/artifacts.rs` + `artifacts` table (logical id +
+  SQL-allocated version, sha256, agent ownership, JSON provenance,
+  project sharing).  register/bump, history, capped preview,
+  deletion (reference only - the owner's file stays), and
+  `export_artifact`: a verified COPY into the recipient's workspace
+  (hash re-checked at export; on-disk tampering after registration
+  is refused).  Project sharing lists shared artifacts to project
+  members without ever opening the jail.  The desktop Artifacts
+  screen lists entities (owner/project/version/size/hash) with
+  preview, register and delete buttons - kittest-verified.
+- **Landlock-sandboxed run_command (mandate 13.4)**:
+  `las-core/src/sandbox.rs` - raw landlock_create_ruleset/add_rule
+  (PATH_BENEATH)/restrict_self syscalls in pre_exec after
+  PR_SET_NO_NEW_PRIVS; jail = only writable root, system dirs
+  read+execute; argv arrays only; setsid + group SIGKILL timeout;
+  RLIMIT_AS/CPU/FSIZE/NOFILE; 64 KB output cap; command policy
+  from profile `command_allowlist` (fail-closed when empty);
+  granted per agent like every tool, ask-modes through the
+  approval gate.  **Fail closed** on kernels without Landlock -
+  this sandbox's 5.10 kernel runs exactly that path; CI's 6.x
+  kernels run the confinement tests (in-jail write ok, escape
+  write and outside-file read refused, timeout kills the tree).
+- **Provider-exact token accounting (mandate 9.3)**: `token_usage`
+  table records every call's exact provider counts with our
+  pre-call estimate; `context::calibrate` shrinks the budget by the
+  observed ratio when the provider counts MORE (labelled; never
+  pretends estimates are exact); the production responder wires it
+  in - verified against a real local HTTP endpoint.
+- **MCP Streamable HTTP (mandate 13.2 remainder)**: transport
+  trait split (Stdio/Http) behind the same client facade; `url`
+  configs POST JSON-RPC, capture and resend `Mcp-Session-Id`
+  (test server 400s without it), parse `application/json` and
+  text/event-stream responses, treat 202 as accepted notifications,
+  and mark failures for reconnect.  Registry posture unchanged
+  (approval before connection, allowlists, audit, UNTRUSTED
+  labels) - covered by 4 new HTTP tests against the python fixture.
+
+Test totals: Rust 135 green (109 las-core lib, 6 acceptance, 20
+kittest UI), workspace `--locked`; release build green.  Python
+side untouched this session (315 at 9cb4134).
+
 ## Exact next engineering action
 
-None blocking for v0.4.0 - the P0 scope is built, tested and
-packaged.  Post-launch (P1, not release-blocking): shell/code tools
-behind Landlock (audit item 10), MCP Streamable HTTP transport +
-dynamic tool-schema injection into model turns, artifacts as
-versioned first-class entities, a real tokenizer for context
-assembly, and the environment-blocked verifications (real-server
-capability tests and benchmark, audit items 19/20; installing the
-artifacts needs root/FUSE on a target machine).  Session rollover
-(9.4) and the stdio MCP client (13.2 core) are DONE as of this
-session.
+None blocking - the P0 scope AND the recorded implementable P1
+list are built, tested and packaged: session rollover (9.4), the
+MCP client (stdio + Streamable HTTP, 13.2 core), Landlock
+run_command (13.4, audit item 10), versioned artifacts (10) and
+provider-exact token accounting (9.3) are all in as of this
+session.  What remains is genuinely blocked or deliberately
+deferred: the environment-blocked verifications (real-server
+capability tests and real-model benchmark, audit items 19/20 -
+harnesses shipped, need a model server; installing the .deb/
+AppImage needs root/FUSE on a target machine), dynamic MCP
+tool-schema injection into model turns (an enhancement on top of
+the callable-by-name tools), a tokenizer dependency if one is ever
+wanted beyond provider-exact counts, and the deferred audit
+residuals (Python registry recursion #14, Rust credentials
+serializer audit #13 residual).
