@@ -110,6 +110,110 @@ def _driver(engine: Engine, run_id: str, adapter, config=None):
                          config or DriverConfig(failure_policy="stop"))
 
 
+# -- real-provider corpus ----------------------------------------------------
+
+def real_adapter(preset: str, base_url: str, timeout: float = 300.0):
+    """A live OpenAI-compatible adapter for ``--provider`` runs.  The
+    preset string resolves through PRESETS (ollama/lmstudio/...), so
+    quirks like the Unsloth enable_tools:false policy apply here too."""
+    from las.modules.providers import ChatCompletionsAdapter
+    return ChatCompletionsAdapter(preset, base_url, None,
+                                  preset=preset, timeout=timeout)
+
+
+def _real_driver(engine: Engine, run_id: str, provider_id: str,
+                 adapter, model: str, config=None):
+    registry = ProviderRegistry()
+    registry.register(provider_id, adapter)
+    return engine.driver(run_id, registry,
+                         {"default": (provider_id, model)},
+                         config or DriverConfig(failure_policy="stop"))
+
+
+def run_corpus_real(data_dir: str, goals, adapter, provider_id: str,
+                    model: str, json_schema_supported: bool = True,
+                    params: dict | None = None,
+                    on_goal=None) -> dict:
+    """The corpus with a LIVE model: the same goals, the same metrics,
+    no scripted replies.  What this measures is the MODEL - the harness
+    itself was validated by the mock dry-run."""
+    metrics = {"goals": len(goals), "first_attempt_valid": 0,
+               "valid_after_repair": 0, "completed_without_help": 0,
+               "gate_pauses": 0, "plan_failures": 0, "run_failures": 0,
+               "repair_rounds": []}
+    for idx, goal in enumerate(goals):
+        result = Planner(adapter, model,
+                         params=params or {"temperature": 0.2,
+                                           "max_tokens": 4096},
+                         json_schema_supported=json_schema_supported
+                         ).plan(goal.text)
+        metrics["repair_rounds"].append(result.repair_rounds)
+        if result.valid:
+            metrics["valid_after_repair"] += 1
+        if result.valid and result.repair_rounds == 0:
+            metrics["first_attempt_valid"] += 1
+        if not result.valid:
+            metrics["plan_failures"] += 1
+            if on_goal is not None:
+                on_goal(idx, goal, "plan-invalid")
+            continue
+        engine = Engine(data_dir)
+        run_id = engine.create_run(result.plan)
+        _real_driver(engine, run_id, provider_id, adapter,
+                     model).run()
+        state = engine.state(run_id)
+        if state.status == "succeeded":
+            metrics["completed_without_help"] += 1
+        elif state.status == "paused":
+            metrics["gate_pauses"] += 1
+        else:
+            metrics["run_failures"] += 1
+        if on_goal is not None:
+            on_goal(idx, goal, state.status)
+    return metrics
+
+
+def kill_cycles_real(data_dir: str, cycles: int, goals, adapter,
+                     provider_id: str, model: str,
+                     json_schema_supported: bool = True,
+                     seed: int = 20261121) -> dict:
+    """Kill/resume against a LIVE model.  Abandon the driver at a task
+    boundary, then resume the run through the real provider and require
+    a clean finish - the same success bar as the mock cycles."""
+    rng = random.Random(seed)
+    pool = [g for g in goals if g.kind != "gated"]
+    if not pool:
+        raise ValueError("kill cycles need non-gated goals")
+    result = {"cycles": cycles, "resumed_ok": 0, "failures": []}
+    for _ in range(cycles):
+        goal = pool[rng.randrange(len(pool))]
+        plan_result = Planner(adapter, model,
+                              json_schema_supported=json_schema_supported
+                              ).plan(goal.text)
+        if not plan_result.valid:
+            result["failures"].append(
+                {"goal": goal.gid, "steps": 0, "status": "plan-invalid"})
+            continue
+        plan = plan_result.plan
+        engine = Engine(data_dir)
+        run_id = engine.create_run(plan)
+        driver = _real_driver(engine, run_id, provider_id, adapter,
+                              model)
+        steps = rng.randint(1, max(1, len(plan.tasks) - 1))
+        for _ in range(steps):
+            driver.step()
+        # Abandon this driver (the "kill"); a fresh one resumes the run
+        # through the same live provider.
+        _real_driver(engine, run_id, provider_id, adapter, model).run()
+        state = engine.state(run_id)
+        if state.status == "succeeded":
+            result["resumed_ok"] += 1
+        else:
+            result["failures"].append(
+                {"goal": goal.gid, "steps": steps, "status": state.status})
+    return result
+
+
 # -- corpus metrics ---------------------------------------------------------
 
 def run_corpus(data_dir: str, goals=None) -> dict:

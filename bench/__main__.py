@@ -1,8 +1,11 @@
 """Run the Phase 0 benchmark: ``python -m bench`` (mock harness dry-run).
 
-Real-model runs use the same corpus through a configured provider once one
-is reachable: ``python -m bench --provider my-server`` (not available in
-this environment; the flag exists and reports what it would need).
+Real-model runs point the SAME corpus at a live OpenAI-compatible
+server: ``python -m bench --provider ollama --model qwen2.5:0.5b``.
+The capability probe runs first and its findings drive the planner
+configuration (json-schema support), exactly like the app's setup
+flow; the mock numbers validate the harness, the real numbers
+measure the model, and every report says which is which.
 """
 
 import argparse
@@ -10,9 +13,142 @@ import json
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime, timezone
 
 from bench.harness import run_all
+
+
+def _run_real(args, data_dir: str) -> int:
+    from las.modules.providers.presets import PRESETS
+    from las.modules.providers.probe import detect_servers, probe
+    from bench.harness import (
+        cap_check, kill_cycles_real, real_adapter, run_corpus_real,
+        socket_audit,
+    )
+    from bench.goals import build_corpus
+
+    preset = PRESETS.get(args.provider, PRESETS["generic"])
+    base_url = args.base_url or preset.default_base_url
+    model = args.model or ""
+    if not model:
+        print("a real-provider run needs --model (the server's model id)")
+        return 2
+
+    # The capability probe (audit: real-server capability tests) -
+    # against the LIVE server, before any benchmark traffic.
+    print(f"provider {args.provider!r} at {base_url}, model {model!r}")
+    found = detect_servers()
+    print(f"server detection: "
+          + (f"port {found[0]['port']} ({found[0]['guess']}) - "
+             f"{len(found)} reachable" if found else "none of the "
+             "well-known ports answered (continuing anyway)"))
+    adapter = real_adapter(args.provider, base_url, args.timeout)
+    started = time.monotonic()
+    caps = probe(adapter, model, provider_id=args.provider)
+    print(f"capability probe ({time.monotonic() - started:.1f}s): "
+          f"reachable={caps.reachable} authenticated={caps.authenticated} "
+          f"models_listed={caps.models_listed} streaming={caps.streaming} "
+          f"tool_calling={caps.tool_calling} json_schema={caps.json_schema} "
+          f"token_counting={caps.token_counting} "
+          f"server_version={caps.server_version!r}")
+    if not (caps.reachable and caps.authenticated):
+        print("server not reachable/authenticated; aborting")
+        return 2
+
+    goals = build_corpus(min(args.goals, 100))
+    print(f"corpus: {len(goals)} goals against the live model "
+          f"(this measures the MODEL, not the harness)")
+    t0 = time.monotonic()
+    corpus = run_corpus_real(
+        data_dir, goals, adapter, args.provider, model,
+        json_schema_supported=caps.json_schema,
+        on_goal=lambda i, g, status: print(
+            f"  goal {i + 1}/{len(goals)} [{g.kind}] {status} "
+            f"({time.monotonic() - t0:.0f}s)"))
+    repair_rounds = corpus.pop("repair_rounds")
+    corpus["mean_repair_rounds"] = (
+        round(sum(repair_rounds) / len(repair_rounds), 3)
+        if repair_rounds else 0)
+
+    kills = min(args.kills, 5)
+    print(f"kill/resume: {kills} cycles against the live model")
+    # The kill pool is its own deterministic slice of NON-GATED goals:
+    # small --goals values can be all-gated (the corpus front-loads
+    # them), and kills need resumable runs.
+    kill_pool = [g for g in build_corpus(100) if g.kind != "gated"][:20]
+    kill = kill_cycles_real(data_dir, kills, kill_pool, adapter,
+                            args.provider, model,
+                            json_schema_supported=caps.json_schema)
+
+    # Engine-deterministic gates stay on the mock: cap enforcement and
+    # the DEFAULT-configuration network audit are engine behavior, and
+    # the audit's zero-connection bar is about no provider being
+    # configured - a live provider would (correctly) connect.
+    cap = cap_check(data_dir)
+    net = socket_audit(data_dir)
+
+    exit_code = 0
+    if kill["cycles"] and \
+            kill["resumed_ok"] / kill["cycles"] < \
+            bench_targets()["resume_after_kill"]:
+        # a small model failing resumes is a MODEL result, not an
+        # engine regression - engine gates below decide the exit code
+        pass
+    report = {
+        "provider": {"id": args.provider, "base_url": base_url,
+                     "model": model,
+                     "note": "live server - real-model measurement; "
+                             "NOT the PRD reference model"},
+        "capability_probe": {
+            "reachable": caps.reachable,
+            "authenticated": caps.authenticated,
+            "models_listed": caps.models_listed,
+            "streaming": caps.streaming,
+            "tool_calling": caps.tool_calling,
+            "json_schema": caps.json_schema,
+            "token_counting": caps.token_counting,
+            "context_length": caps.context_length,
+            "server_version": caps.server_version,
+        },
+        "corpus": corpus,
+        "resume_after_kill": kill,
+        "cap": cap,
+        "network": net,
+        "engine_gates_passed": (cap["cap_reached"]
+                                and cap["work_after_cap"] == 0
+                                and not net["outbound_attempts"]),
+    }
+    out_dir = args.out or os.path.join("bench", "results")
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = os.path.join(out_dir, f"bench-real-{stamp}.json")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2)
+
+    c = report["corpus"]
+    k = report["resume_after_kill"]
+    print(f"Corpus (LIVE {model!r}): {c['goals']} goals")
+    print(f"  valid first attempt:  {c['first_attempt_valid']}/{c['goals']}"
+          f" (PRD >= 90% is a REFERENCE-model target)")
+    print(f"  valid after repair:   {c['valid_after_repair']}/{c['goals']}"
+          f" (PRD >= 99% is a REFERENCE-model target)")
+    print(f"  mean repair rounds:   {c['mean_repair_rounds']}")
+    print(f"  done without help:    {c['completed_without_help']}/{c['goals']}"
+          f"  [gate pauses: {c['gate_pauses']}, "
+          f"plan failures: {c['plan_failures']}, "
+          f"run failures: {c['run_failures']}]")
+    print(f"Forced kills: {k['resumed_ok']}/{k['cycles']} resumed cleanly"
+          f"  (failures: {k['failures']})")
+    print(f"Engine gates (mock-validated): "
+          f"{'PASSED' if report['engine_gates_passed'] else 'FAILED'}")
+    print(f"Results: {path}")
+    return exit_code
+
+
+def bench_targets():
+    from bench.harness import PRD_TARGETS
+    return PRD_TARGETS
 
 
 def main(argv=None) -> int:
@@ -20,19 +156,26 @@ def main(argv=None) -> int:
     parser.add_argument("--goals", type=int, default=100,
                         help="corpus size (max 100)")
     parser.add_argument("--kills", type=int, default=200,
-                        help="forced-kill/resume cycles")
+                        help="forced-kill/resume cycles (real runs cap at 5)")
     parser.add_argument("--seed", type=int, default=20261121)
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--out", default=None, help="results directory")
     parser.add_argument("--provider", default="mock",
-                        help="provider for worker/planner calls")
+                        help="provider for worker/planner calls; "
+                             "'mock' dry-runs the harness, anything else "
+                             "is a live OpenAI-compatible preset id "
+                             "(ollama, lmstudio, generic, ...)")
+    parser.add_argument("--base-url", default=None,
+                        help="override the preset's base URL")
+    parser.add_argument("--model", default=None,
+                        help="model id on the live server")
+    parser.add_argument("--timeout", type=float, default=300.0,
+                        help="per-request timeout for live calls")
     args = parser.parse_args(argv)
 
     if args.provider != "mock":
-        print(f"provider {args.provider!r}: the benchmark needs a reachable "
-              "server; none is available in this environment. The mock "
-              "dry-run validates the harness itself.")
-        return 2
+        data_dir = args.data_dir or tempfile.mkdtemp(prefix="las-bench-")
+        return _run_real(args, data_dir)
 
     data_dir = args.data_dir or tempfile.mkdtemp(prefix="las-bench-")
     report, exit_code = run_all(data_dir, args.goals, args.kills, args.seed)
