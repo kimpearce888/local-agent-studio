@@ -69,10 +69,13 @@ Cargo workspace, `pyproject.toml`, `las.__version__` and the meta
 table's `app_version` row, so an artifact version always matches what
 `studio --version` reports.
 
-CI (`.github/workflows/ci.yml`) gates every push on the Python matrix
-(3.10/3.11/3.12): the full unittest suite, the disposable-module
-removal verifications and a packaging smoke test (wheel builds,
-installs, `studio --version` runs). The suite skips the tkinter GUI
+CI (`.github/workflows/ci.yml`) gates every push on two jobs.  The
+Python matrix (3.10/3.11/3.12) runs the full unittest suite, the
+disposable-module removal verifications and a packaging smoke test
+(wheel builds, installs, `studio --version` runs).  The Rust job
+builds the workspace on stable: `cargo test --workspace --locked`
+(engine, parity, acceptance and the headless egui_kittest UI suite)
+plus a release build of the desktop shell. The suite skips the tkinter GUI
 tests honestly when the Python build ships without _tkinter or no
 DISPLAY is available - it never collects errors for environmental
 reasons.

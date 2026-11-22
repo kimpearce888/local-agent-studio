@@ -28,3 +28,27 @@ jobs:
           pip install dist/*.whl
           studio --version
           python -c "import las; print(las.__version__)"
+
+  # The product engine and desktop shell are Rust (rust/); the
+  # suite runs headless (egui_kittest needs no display, the local
+  # HTTP server tests bind loopback only).  rusqlite is bundled,
+  # so no system SQLite is needed.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install eframe build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev \
+            libwayland-dev wayland-protocols
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Test the Rust workspace
+        working-directory: rust
+        run: cargo test --workspace --locked
+      - name: Release build of the desktop shell
+        working-directory: rust
+        run: cargo build --release -p las-desktop --locked
