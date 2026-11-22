@@ -45,7 +45,7 @@ Standard), combining:
   (during migration: `las.cli:main` re-export shim). The CLI is a thin driver over the
   engine library; the M1 HTTP API is a second, equally thin driver (`studio serve`).
 - Startup: load settings from `studio.db`, discover module manifests
-  (`las/modules/*/manifest.py`, one level of children), resolve enabled modules,
+  (`las/modules/**/manifest.py`, any nesting depth), resolve enabled modules,
   register contributed CLI commands, refuse disabled core modules with an actionable
   error. Disablement takes effect at process start (no hot-unload in Python).
 - Build/package: `pip wheel .` produces a dependency-free wheel; tests run with

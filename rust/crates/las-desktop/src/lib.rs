@@ -37,16 +37,6 @@ pub const NAV_AREAS: [&str; 14] = [
     "Settings & Diagnostics",
 ];
 
-/// Areas whose engine subsystem is wired into las-core today.
-const LIVE_AREAS: [&str; 14] = [
-    "Dashboard", "Agents", "Inbox & Messages", "Sessions & Memory",
-    "Collaboration Channels", "Agent Teams / Network",
-    "Providers & Models", "Activity & History",
-    "Tools & Integrations", "Projects",
-    "Artifacts & Files", "Tasks & Delegations",
-    "Workflow Studio", "Settings & Diagnostics",
-];
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum NavArea {
     Dashboard,

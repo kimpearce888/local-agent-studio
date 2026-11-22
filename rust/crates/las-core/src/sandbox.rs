@@ -302,9 +302,9 @@ pub fn run_confined(
     drop(child.stdin.take());
 
     // Reader threads end at pipe EOF, including after SIGKILL.
-    let mut stdout_pipe = child.stdout.take()
+    let stdout_pipe = child.stdout.take()
         .ok_or("no stdout")?;
-    let mut stderr_pipe = child.stderr.take()
+    let stderr_pipe = child.stderr.take()
         .ok_or("no stderr")?;
     let out_t = std::thread::spawn(move || {
         let mut buf = Vec::new();

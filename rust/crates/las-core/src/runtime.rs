@@ -166,8 +166,7 @@ impl Actor {
     /// domain allowlist from profile params.  An in-memory store
     /// has no data dir, so file tools have no jail and are denied
     /// honestly; web_fetch can still run with its allowlist.
-    fn tool_broker(&self, entry: &InboxRow)
-                   -> crate::tools::Broker {
+    fn tool_broker(&self) -> crate::tools::Broker {
         let agent = self.store.agent(&self.agent_id)
             .map(|a| a.profile).ok();
         let grants: Vec<crate::tools::ToolGrant> = agent.as_ref()
@@ -210,7 +209,7 @@ impl Actor {
         locks.entry(session.into()).or_default().clone()
     }
 
-    async fn run(mut self, mut rx: mpsc::UnboundedReceiver<AgentCommand>) {
+    async fn run(self, mut rx: mpsc::UnboundedReceiver<AgentCommand>) {
         while let Some(cmd) = rx.recv().await {
             match cmd {
                 AgentCommand::Shutdown => break,
@@ -278,7 +277,7 @@ impl Actor {
         // the result is appended to the transcript, and the model
         // gets another round - bounded by MAX_TOOL_ROUNDS and
         // MAX_TOOL_CALLS_PER_TURN (spec 5.9 rate limit).
-        let broker = self.tool_broker(&entry);
+        let broker = self.tool_broker();
         let mut reply = (self.responder)(&entry).await;
         let mut calls_used = 0usize;
         for _round in 0..crate::tools::MAX_TOOL_ROUNDS {

@@ -1327,8 +1327,6 @@ impl CoreStore {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE agent_sessions SET status='rolled_over'              WHERE id=?", params![from])?;
-        let fresh = format!("{agent_id}-s-{}-{:x}", from.len(),
-                            conn.last_insert_rowid().max(0));
         // Deterministic segment id from the agent + a counter.
         let count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM agent_sessions WHERE agent_id=?",

@@ -22,6 +22,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from make_deb import icon_png, workspace_version   # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "rust"
 DIST = ROOT / "dist"
@@ -55,6 +58,66 @@ def find_appimagetool(explicit: str | None) -> Path | None:
         if p.exists():
             return p
     return None
+
+
+def _execution_smoke(binary: Path, appdir: Path) -> str:
+    """Run the self-extracted binary on a private Xvfb display;
+    return a verdict line.  Skipped (plainly) when Xvfb or the GUI
+    libs are absent - the deb script documents the same escape
+    hatch (LAS_SMOKE_LIBDIR)."""
+    import time
+    if shutil.which("Xvfb") is None:
+        return "SKIP: execution smoke (no Xvfb on this machine)"
+    display = f":{os.getpid() % 400 + 60}"
+    sock = Path(f"/tmp/.X11-unix/X{display[1:]}")
+    xvfb = subprocess.Popen(
+        ["Xvfb", display, "-screen", "0", "1280x800x24"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(50):
+            if sock.exists():
+                break
+            time.sleep(0.1)
+        else:
+            return "FAIL: Xvfb display never came up"
+        with tempfile.TemporaryDirectory() as dd:
+            data_dir = Path(dd) / "data"
+            env = {**dict(os.environ),
+                   "LAS_DATA_DIR": str(data_dir),
+                   "DISPLAY": display,
+                   "LIBGL_ALWAYS_SOFTWARE": "1",
+                   # AppImages normally find their bundled libs via
+                   # the runtime; for the smoke we ran the payload
+                   # directly, so mirror the AppRun behaviour.
+                   "APPDIR": str(appdir)}
+            extra = os.environ.get("LAS_SMOKE_LIBDIR", "")
+            if extra:
+                env["LD_LIBRARY_PATH"] = (
+                    f"{extra}:{env.get('LD_LIBRARY_PATH', '')}")
+                vendor = (Path(extra).parents[1] / "share"
+                          / "glvnd" / "egl_vendor.d"
+                          / "50_mesa.json")
+                if vendor.exists():
+                    env["__EGL_VENDOR_LIBRARY_FILENAMES"] = str(vendor)
+            p = subprocess.Popen([str(binary)], env=env,
+                                 stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.PIPE)
+            try:
+                p.wait(timeout=3)
+                err = (p.stderr.read() or b"").decode(
+                    errors="replace")
+                return (f"FAIL: binary exited early "
+                        f"({err.strip()[:200]})")
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
+            if not (data_dir / "studio.db").exists():
+                return "FAIL: no studio.db created in the data dir"
+            return (f"OK: extracted binary ran 3s on display "
+                    f"{display} and opened its store")
+    finally:
+        xvfb.terminate()
+        xvfb.wait()
 
 
 def main() -> int:
@@ -97,18 +160,51 @@ def main() -> int:
         print(f"FAIL: release binary missing: {BIN_SRC}")
         return 1
 
-    version = None
-    for line in (RUST / "Cargo.toml").read_text().splitlines():
-        if line.startswith("version ="):
-            version = line.split("=")[1].strip().strip('"')
-            break
+    version = workspace_version()
     if not version:
         print("FAIL: workspace version not found")
         return 1
 
-    BIN_DST.parent.mkdir(parents=True, exist_ok=True)
+    # Scaffold the FULL AppDir here (idempotent): binary, AppRun,
+    # desktop entry, icon, AppStream metainfo - no prepared dist/
+    # tree is assumed, the script works from any fresh checkout.
+    if APPDIR.exists():
+        shutil.rmtree(APPDIR)
+    BIN_DST.parent.mkdir(parents=True)
     shutil.copy2(BIN_SRC, BIN_DST)
     binary_sha = sha256(BIN_DST)
+    (APPDIR / "AppRun").write_text(
+        "#!/bin/sh\n"
+        'HERE="$(dirname "$(readlink -f "$0")")"\n'
+        'exec "$HERE/usr/bin/las-desktop" "$@"\n')
+    (APPDIR / "AppRun").chmod(0o755)
+    (APPDIR / "local-agent-studio.desktop").write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Local Agent Studio\n"
+        "Comment=A local-first desktop studio for AI agent teams\n"
+        "Exec=las-desktop\n"
+        "Terminal=false\n"
+        "Categories=Development;Office;Utility;\n"
+        "Icon=local-agent-studio\n")
+    icons = APPDIR / "usr" / "share" / "icons" / "hicolor" \
+        / "128x128" / "apps"
+    icons.mkdir(parents=True)
+    (icons / "local-agent-studio.png").write_bytes(icon_png())
+    shutil.copy2(icons / "local-agent-studio.png",
+                 APPDIR / ".DirIcon")
+    metainfo = (APPDIR / "usr" / "share" / "metainfo")
+    metainfo.mkdir(parents=True)
+    (metainfo / "local-agent-studio.appdata.xml").write_text(
+        f'<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<component type="desktop-application">\n'
+        '  <id>local-agent-studio</id>\n'
+        '  <name>Local Agent Studio</name>\n'
+        f'  <releases><release version="{version}"/></releases>\n'
+        '  <metadata_license>MIT</metadata_license>\n'
+        '  <summary>Local-first desktop studio for AI agent '
+        'teams</summary>\n'
+        '</component>\n')
 
     out = DIST / f"local-agent-studio-{version}-x86_64.AppImage"
     env = dict(os.environ, ARCH="x86_64")
@@ -132,8 +228,15 @@ def main() -> int:
         if sha256(extracted) != binary_sha:
             print("FAIL: extracted binary checksum mismatch")
             return 1
+        # EXECUTION SMOKE (same policy as the deb): the extracted
+        # binary must run a real GUI main loop for 3 seconds on a
+        # private Xvfb display and open its store.
+        smoke = _execution_smoke(extracted, Path(td) / "squashfs-root")
+        print(smoke)
+        if smoke.startswith("FAIL"):
+            return 1
     print(f"OK: {out} ({out.stat().st_size} bytes) verified by "
-          f"self-extraction + checksum")
+          f"self-extraction + checksum + execution smoke")
     return 0
 
 

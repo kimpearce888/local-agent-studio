@@ -683,7 +683,7 @@ impl McpClients {
         self.store.list_mcp_server_rows()
             .unwrap_or_default()
             .into_iter()
-            .filter_map(|(id, json, enabled)| {
+            .filter_map(|(_id, json, enabled)| {
                 let cfg: McpServerConfig =
                     serde_json::from_str(&json).ok()?;
                 Some((cfg, enabled))

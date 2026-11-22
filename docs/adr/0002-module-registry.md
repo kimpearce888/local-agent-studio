@@ -20,10 +20,12 @@ Each module ships `manifest.py` exposing a `MODULE` instance of
 `shared.module_contract.ModuleManifest`: id, version, parent, summary, contract import
 path, `requires` / `optional` module ids, `default_enabled`, `core` (host-required),
 contributed `commands`, and `test_files`. The host (`las/app/registry.py`) discovers
-manifests by a `pkgutil` scan of `las/modules/*/manifest.py` plus one level of
-children (`las/modules/<parent>/<child>/manifest.py`) — Python needs no generated
-references, so this is reliable automatic discovery with no central index. The
-registry validates: unique ids, parents exist, declared dependencies exist, graph
+manifests by a recursive `pkgutil` scan of `las/modules/**/manifest.py` at any
+nesting depth — Python needs no generated references, so this is reliable
+automatic discovery with no central index. The
+registry validates: unique ids, parents exist, parent chains acyclic (audit item
+14: trees may nest recursively; a seen-set walk rejects cycles and self-parenting,
+with a 64-level sanity guard), declared dependencies exist, graph
 acyclic, declared test files exist. Enablement is a settings key (`module.<id>.enabled`)
 resolved at process start; disabled modules are not handed out and their commands are
 not registered; required dependents of a disabled/missing module produce an

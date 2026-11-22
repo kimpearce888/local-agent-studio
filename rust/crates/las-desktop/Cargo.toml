@@ -9,5 +9,7 @@ las-core = { path = "../las-core" }
 eframe = "0.37"
 egui = "0.37"
 serde_json = { workspace = true }
-egui_kittest = "0.37.0"
 tokio = { workspace = true, features = ["rt", "time"] }
+
+[dev-dependencies]
+egui_kittest = "0.37.0"
