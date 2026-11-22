@@ -12,10 +12,21 @@
 use las_core::storage::{CoreStore, InboxRow};
 use std::sync::Arc;
 
+mod bootstrap;
+pub use bootstrap::RuntimeHandle;
+
 mod screens;
-pub use screens::{channels_screen, sessions_screen, teams_screen};
+pub use screens::{channels_screen, history_screen,
+                  providers_screen, sessions_screen,
+                  teams_screen};
 
 /// The mandate's fourteen navigation areas (section 14).
+/// The tool vocabulary agents can be granted explicitly (mandate
+/// 10.1). Unticked = not granted; there is no implicit grant.
+pub const KNOWN_TOOLS: [&str; 4] = [
+    "read_file", "write_file", "list_files", "web_fetch",
+];
+
 pub const NAV_AREAS: [&str; 14] = [
     "Dashboard", "Projects", "Agents", "Agent Teams / Network",
     "Inbox & Messages", "Collaboration Channels", "Tasks & Delegations",
@@ -25,9 +36,10 @@ pub const NAV_AREAS: [&str; 14] = [
 ];
 
 /// Areas whose engine subsystem is wired into las-core today.
-const LIVE_AREAS: [&str; 6] = [
+const LIVE_AREAS: [&str; 8] = [
     "Dashboard", "Agents", "Inbox & Messages", "Sessions & Memory",
     "Collaboration Channels", "Agent Teams / Network",
+    "Providers & Models", "Activity & History",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +50,8 @@ pub enum NavArea {
     Sessions,
     Channels,
     Teams,
+    Providers,
+    History,
     Planned(usize),     // index into NAV_AREAS
 }
 
@@ -49,6 +63,7 @@ pub struct AppState {
     /// New-agent form fields (real state, not demo data).
     pub new_agent_name: String,
     pub new_agent_prompt: String,
+    pub new_agent_tools: Vec<String>,
     pub new_agent_model: String,
     /// Message composer fields.
     pub compose_to: String,
@@ -66,6 +81,18 @@ pub struct AppState {
     pub channel_join_agent: String,
     pub channel_post_author: String,
     pub channel_post_content: String,
+    // Providers & Models screen.
+    pub endpoint_name: String,
+    pub endpoint_url: String,
+    pub endpoint_key_env: String,
+    pub provider_models: std::sync::Arc<
+        std::sync::Mutex<Vec<String>>>,
+    pub provider_note: std::sync::Arc<std::sync::Mutex<String>>,
+    pub probe_log: std::sync::Arc<
+        std::sync::Mutex<Vec<String>>>,
+    pub runtime: Option<RuntimeHandle>,
+    // Activity & History screen.
+    pub history_selected_run: String,
     // Teams / topology screen.
     pub rule_src: String,
     pub rule_dst: String,
@@ -81,6 +108,7 @@ impl AppState {
             inbox_selected: String::new(),
             new_agent_name: String::new(),
             new_agent_prompt: String::new(),
+            new_agent_tools: Vec::new(),
             new_agent_model: "qwen3-8b".into(),
             compose_to: String::new(), compose_text: String::new(),
             status_line: String::new(),
@@ -94,6 +122,17 @@ impl AppState {
             channel_join_agent: String::new(),
             channel_post_author: String::new(),
             channel_post_content: String::new(),
+            endpoint_name: String::new(),
+            endpoint_url: String::new(),
+            endpoint_key_env: String::new(),
+            provider_models: std::sync::Arc::new(
+                std::sync::Mutex::new(Vec::new())),
+            provider_note: std::sync::Arc::new(
+                std::sync::Mutex::new(String::new())),
+            probe_log: std::sync::Arc::new(
+                std::sync::Mutex::new(Vec::new())),
+            runtime: None,
+            history_selected_run: String::new(),
             rule_src: String::new(),
             rule_dst: String::new(),
             rule_message: true,
@@ -163,6 +202,8 @@ pub fn draw_shell(ui: &mut egui::Ui, state: &mut AppState) {
             NavArea::Sessions => sessions_screen(ui, state),
             NavArea::Channels => channels_screen(ui, state),
             NavArea::Teams => teams_screen(ui, state),
+            NavArea::Providers => providers_screen(ui, state),
+            NavArea::History => history_screen(ui, state),
             NavArea::Planned(i) => planned_screen(ui, NAV_AREAS[i]),
         }
         ui.add_space(6.0);
@@ -261,6 +302,27 @@ fn agents_screen(ui: &mut egui::Ui, state: &mut AppState) {
             .hint_text("Model id"));
         ui.end_row();
     });
+    // Explicit tool grants (mandate 10.1/19.7): nothing is granted
+    // implicitly; only ticked tools land in the profile.
+    ui.label("Tool grants (nothing is granted implicitly):");
+    ui.horizontal(|ui| {
+        for tool in crate::KNOWN_TOOLS {
+            // A real binding the checkbox mutates: reading it after
+            // the call reflects the click (a `&mut { granted }` temp
+            // would leave the old value in `granted`).
+            let mut granted = state.new_agent_tools.iter()
+                .any(|t| t == tool);
+            if ui.checkbox(&mut granted,
+                           format!("grant-{tool}")).changed() {
+                if granted {
+                    state.new_agent_tools.push(tool.to_string());
+                } else {
+                    state.new_agent_tools.retain(
+                        |t| t != tool);
+                }
+            }
+        }
+    });
     if ui.button("Create agent").clicked() {
         let name = state.new_agent_name.trim().to_string();
         if name.is_empty() || state.new_agent_prompt.trim().is_empty() {
@@ -274,7 +336,7 @@ fn agents_screen(ui: &mut egui::Ui, state: &mut AppState) {
                 model_provider: "lmstudio".into(),
                 model_id: state.new_agent_model.trim().into(),
                 params: serde_json::Value::Null,
-                tool_grants: vec![],
+                tool_grants: state.new_agent_tools.clone(),
             };
             match state.store.create_agent(&id, &name, "team member",
                                            &spec) {

@@ -58,6 +58,9 @@ def canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+from las import __version__
+
+
 class Store:
     """SQLite store + run directory layout for one data root."""
 
@@ -123,7 +126,7 @@ class Store:
         if row is None:
             db.execute("INSERT INTO meta (key, value) VALUES ('db_schema_version', ?)",
                        (str(DB_SCHEMA_VERSION),))
-            db.execute("INSERT INTO meta (key, value) VALUES ('app_version', ?)", ("0.1.0",))
+            db.execute("INSERT INTO meta (key, value) VALUES ('app_version', ?)", (__version__,))
         else:
             stored = int(row["value"])
             if stored > DB_SCHEMA_VERSION:

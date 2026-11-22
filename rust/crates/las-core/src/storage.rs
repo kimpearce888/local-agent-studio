@@ -118,6 +118,16 @@ CREATE TABLE IF NOT EXISTS channel_posts (
     ts TEXT NOT NULL,
     FOREIGN KEY (channel_id) REFERENCES channels(id)
 );
+CREATE TABLE IF NOT EXISTS provider_endpoints (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    api_key_env TEXT NOT NULL DEFAULT '',
+    -- only the NAME of the env var holding a key is stored; the key
+    -- itself is read at runtime and never persisted
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS comm_rules (
     src TEXT NOT NULL,                     -- agent id or "user"
     dst TEXT NOT NULL,                     -- agent id
@@ -248,6 +258,19 @@ pub struct CommRuleRow {
     pub may_message: bool,
     pub may_call: bool,
     pub may_delegate: bool,
+}
+
+/// One registered OpenAI-compatible endpoint. `api_key_env` holds the
+/// NAME of an environment variable, never a key itself (mandate 12.3:
+/// keys are runtime-only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EndpointRow {
+    pub id: String,
+    pub name: String,
+    pub base_url: String,
+    pub api_key_env: String,
+    pub note: String,
+    pub created_at: String,
 }
 
 impl CoreStore {
@@ -597,6 +620,72 @@ impl CoreStore {
         Ok(rows)
     }
 
+    /// Every inbox entry not yet delivered, across all agents,
+    /// oldest first - the runtime bootstrap polls this.  New entries
+    /// are born "accepted"; "pending" covers queued busy-mode rows.
+    pub fn pending_inbox(&self) -> rusqlite::Result<Vec<InboxRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM inbox WHERE delivery_state \
+             IN ('accepted','pending') ORDER BY id")?;
+        let rows = stmt.query_map([], inbox_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// The most recent inbox entries across all agents (newest
+    /// first) - the activity view.
+    pub fn recent_inbox(&self, limit: i64)
+                        -> rusqlite::Result<Vec<InboxRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM inbox ORDER BY id DESC LIMIT ?")?;
+        let rows = stmt.query_map(params![limit], inbox_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Revoke an explicit rule: default-deny returns for that pair.
+    pub fn delete_comm_rule(&self, src: &str, dst: &str)
+                            -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM comm_rules WHERE src=? AND dst=?",
+                     params![src, dst])
+    }
+
+    /// All registered provider endpoints.
+    pub fn list_endpoints(&self)
+                          -> rusqlite::Result<Vec<EndpointRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, base_url, api_key_env, note, created_at
+             FROM provider_endpoints ORDER BY created_at, id")?;
+        let rows = stmt.query_map([], endpoint_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn upsert_endpoint(&self, e: &EndpointRow)
+                           -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO provider_endpoints (id, name, base_url, \
+             api_key_env, note, created_at) VALUES (?,?,?,?,?,?) \
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, \
+             base_url=excluded.base_url, \
+             api_key_env=excluded.api_key_env, note=excluded.note",
+            params![e.id, e.name, e.base_url, e.api_key_env, e.note,
+                    e.created_at])?;
+        Ok(())
+    }
+
+    pub fn delete_endpoint(&self, id: &str)
+                           -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM provider_endpoints WHERE id=?",
+                     params![id])
+    }
+
     /// Roll a session over: mark the current segment closed, create
     /// the next segment linked to it (mandate 9.2 rollover).  The old
     /// transcript stays fully readable; identity continues.
@@ -736,9 +825,72 @@ fn rule_from_row(r: &Row) -> rusqlite::Result<CommRuleRow> {
     })
 }
 
+fn endpoint_from_row(r: &Row) -> rusqlite::Result<EndpointRow> {
+    Ok(EndpointRow {
+        id: r.get("id")?, name: r.get("name")?,
+        base_url: r.get("base_url")?,
+        api_key_env: r.get("api_key_env")?, note: r.get("note")?,
+        created_at: r.get("created_at")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoints_crud_and_rule_revocation() {
+        let store = CoreStore::in_memory().unwrap();
+        // Endpoint persistence: env-var NAME only, never a key.
+        store.upsert_endpoint(&EndpointRow {
+            id: "lmstudio".into(), name: "LM Studio".into(),
+            base_url: "http://127.0.0.1:1234".into(),
+            api_key_env: "LAS_LMSTUDIO_KEY".into(),
+            note: "dev machine".into(),
+            created_at: utc_now(),
+        }).unwrap();
+        let eps = store.list_endpoints().unwrap();
+        assert_eq!(eps.len(), 1);
+        assert_eq!(eps[0].api_key_env, "LAS_LMSTUDIO_KEY");
+        assert_eq!(eps[0].base_url, "http://127.0.0.1:1234");
+        // Upsert updates in place.
+        store.upsert_endpoint(&EndpointRow {
+            id: "lmstudio".into(), name: "LM Studio 2".into(),
+            base_url: "http://127.0.0.1:1235".into(),
+            api_key_env: String::new(), note: String::new(),
+            created_at: utc_now(),
+        }).unwrap();
+        assert_eq!(store.list_endpoints().unwrap()[0].name,
+                   "LM Studio 2");
+        assert_eq!(store.delete_endpoint("lmstudio").unwrap(), 1);
+        assert!(store.list_endpoints().unwrap().is_empty());
+
+        // Rule revocation restores default-deny.
+        store.create_agent("a", "A", "", &crate::ProfileSpec {
+            system_prompt: "p".into(),
+            model_provider: "m".into(), model_id: "x".into(),
+            params: serde_json::Value::Null, tool_grants: vec![],
+        }).unwrap();
+        store.set_comm_rule(&CommRuleRow {
+            src: "user".into(), dst: "a".into(),
+            may_message: true, may_call: true, may_delegate: true,
+        }).unwrap();
+        assert_eq!(store.list_comm_rules().unwrap().len(), 1);
+        assert_eq!(store.delete_comm_rule("user", "a").unwrap(), 1);
+        assert!(store.list_comm_rules().unwrap().is_empty());
+        // After revocation, the DEFAULT (user->agent allowed) still
+        // applies for the "user" source - revocation of an explicit
+        // agent->agent rule is the real default-deny case:
+        store.set_comm_rule(&CommRuleRow {
+            src: "a".into(), dst: "b".into(),
+            may_message: true, may_call: false, may_delegate: false,
+        }).unwrap();
+        assert_eq!(store.delete_comm_rule("a", "b").unwrap(), 1);
+        let rule = store.comm_rule("a", "b").unwrap();
+        assert!(!rule.may_message && !rule.may_call
+               && !rule.may_delegate,
+               "revoked pair is default-deny again");
+    }
 
     fn agent(id: &str) -> AgentRow {
         AgentRow {

@@ -163,13 +163,59 @@ full restart) - as integration tests in
 - No passwordless sudo: cannot install GTK/WebKit (Tauri) or
   xkbcommon-x11 (on-screen egui window in-sandbox only - ADR-003).
 
+## This session's additions (after d8e14e0)
+
+- **Providers & Models screen** (live area #7): register
+  OpenAI-compatible endpoints (persisted `provider_endpoints` table;
+  the key is stored as an ENV-VAR NAME only, the secret is read at
+  runtime start and never touches disk), discover models over REAL
+  HTTP, probe each model with a real chat call, start/stop the
+  runtime.
+- **Runtime bootstrap** (`bootstrap.rs`): one background thread owns
+  a current-thread tokio runtime + `AgentRuntime` with the production
+  responder; it polls `pending_inbox()` (entries born "accepted" -
+  the first poll-state bug was caught by 19.8 and fixed) and delivers
+  every entry through the fair scheduler and the blocking HTTP call.
+- **Activity & History screen** (live area #8): recent deliveries
+  from the agent store + the VERIFIED legacy run history
+  (`migration::legacy_runs`/`legacy_events`, hash chain verified on
+  read, a broken chain is reported, never hidden).
+- **19.7 green**: revoking a rule through the Teams screen restores
+  default-deny AND the engine actually refuses the message; tool
+  grants are explicit checkboxes (nothing implicit) and land in the
+  profile.
+- **19.8 green - the full desktop walk-through**: a kittest test with
+  a REAL loopback HTTP server: register endpoint via UI -> start
+  runtime via UI -> compose a message via UI -> the background thread
+  delivers it through the scheduler and a genuine HTTP round-trip ->
+  the model reply lands in the transcript -> visible on the Sessions
+  screen -> the acked delivery shows in Activity -> clean stop via
+  UI. Two real bugs were found by this scenario and fixed (the
+  accepted-vs-poll-state mismatch and a checkbox temp-binding bug).
+- **AppImage**: `scripts/make_appimage.py` builds
+  `local-agent-studio-0.4.0-x86_64.AppImage` (10.6 MB) with the
+  extracted appimagetool (no root, no FUSE needed to BUILD);
+  verification = self-extraction + payload comparison. RUNNING it
+  needs FUSE on the target machine - not testable in this sandbox.
+- **Version unification**: 0.4.0 everywhere (Cargo workspace already
+  0.4.0; pyproject.toml, `las.__version__`, and the meta table's
+  app_version now tracks the package version instead of a stale
+  hardcoded 0.1.0).
+
+## Test results
+
+- Rust: 62 passed (44 las-core unit + 6 acceptance 19.1-19.6 + 12 UI
+  including 19.7/19.8), `cargo test --workspace` green.
+- Python reference engine: 313 tests green headless (326+ with the
+  tkinter GUI suite under Xvfb).
+
 ## Exact next engineering action
 
-Wire the desktop to the production responder and the Python-run
-history: a Providers & Models screen that registers real endpoints
-(base URL + optional env-referenced key) with capability probing, the
-runtime started from the desktop (agents actually conversing through
-the scheduler), and a Run History view over `migration::legacy_runs`.
-Then 19.7 (permission surfaces in the UI) and 19.8 (the full desktop
-walk-through), AppImage alongside the .deb, and the version
-unification (0.4.0 everywhere).
+Context assembly for real agent work: the responder currently sends
+system prompt + single message; next is token-budgeted context
+assembly over the session transcript and memory (mandate 9), then
+agent-to-agent conversation flows through the running runtime
+(replies routed back into the sender's inbox), the Tools &
+Integrations screen over the tool-grant model, and an installer
+pipeline note in the release policy (docs/user/release-policy.md)
+covering the .deb and AppImage artifacts.

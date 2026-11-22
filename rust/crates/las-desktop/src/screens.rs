@@ -348,6 +348,14 @@ pub fn teams_screen(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label(yes_no(r.may_message));
                     ui.label(yes_no(r.may_call));
                     ui.label(yes_no(r.may_delegate));
+                    if ui.button(format!(
+                        "revoke-{}->{}", r.src, r.dst)).clicked() {
+                        let _ = store.delete_comm_rule(&r.src,
+                                                       &r.dst);
+                        state.status_line = format!(
+                            "Revoked {} -> {}: default-deny again",
+                            r.src, r.dst);
+                    }
                     ui.end_row();
                 }
                 if rules.is_empty() {
@@ -366,4 +374,299 @@ fn yes_no(b: bool) -> &'static str {
 #[allow(dead_code)]
 pub fn test_state(store: std::sync::Arc<CoreStore>) -> AppState {
     AppState::from_store(store)
+}
+
+/// Providers & Models (mandate section 12): register real
+/// OpenAI-compatible endpoints, list their models over REAL HTTP,
+/// probe capabilities with a real chat call, and start/stop the
+/// runtime that drives actual model turns. Keys are referenced by
+/// environment-variable NAME only; the secret is read at runtime
+/// start and never persisted.
+pub fn providers_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Providers & Models");
+    let store = state.store.clone();
+
+    // Background HTTP results arrive through shared slots; repaint so
+    // the UI notices them without user interaction.
+    ui.ctx().request_repaint_after(std::time::Duration::
+                                    from_millis(150));
+
+    // Register endpoint.
+    egui::Grid::new("endpoint-form").num_columns(2).show(ui, |ui| {
+        ui.label("Name");
+        ui.add(egui::TextEdit::singleline(&mut state.endpoint_name)
+            .hint_text("e.g. lmstudio"));
+        ui.end_row();
+        ui.label("Base URL");
+        ui.add(egui::TextEdit::singleline(&mut state.endpoint_url)
+            .hint_text("http://127.0.0.1:1234"));
+        ui.end_row();
+        ui.label("API key env var (optional)");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.endpoint_key_env)
+            .hint_text("LAS_LMSTUDIO_KEY"));
+        ui.end_row();
+    });
+    if ui.button("Save endpoint").clicked() {
+        let name = state.endpoint_name.trim().to_string();
+        let url = state.endpoint_url.trim().to_string();
+        if name.is_empty() || url.is_empty() {
+            state.status_line = "Name and base URL are required"
+                .into();
+        } else if !url.starts_with("http://")
+            && !url.starts_with("https://") {
+            state.status_line = "Base URL must start with http:// \
+                                 or https://".into();
+        } else {
+            let id = name.to_lowercase().replace(
+                |c: char| !c.is_ascii_alphanumeric(), "-");
+            let _ = store.upsert_endpoint(
+                &las_core::storage::EndpointRow {
+                    id, name, base_url: url,
+                    api_key_env: state.endpoint_key_env.trim()
+                        .to_string(),
+                    note: String::new(),
+                    created_at: las_core::storage::utc_now(),
+                });
+            state.status_line = "Endpoint saved".into();
+        }
+    }
+    ui.separator();
+
+    // Endpoints with REAL model discovery.
+    let endpoints = store.list_endpoints().unwrap_or_default();
+    if endpoints.is_empty() {
+        ui.label("(no endpoints registered yet)");
+    } else {
+        egui::Grid::new("endpoints").striped(true).num_columns(5)
+            .show(ui, |ui| {
+                ui.strong("Name"); ui.strong("Base URL");
+                ui.strong("Key env"); ui.strong("Models");
+                ui.strong("Action"); ui.end_row();
+                for e in &endpoints {
+                    ui.label(&e.name);
+                    ui.label(&e.base_url);
+                    ui.label(if e.api_key_env.is_empty() {
+                        "(none)".to_string()
+                    } else { e.api_key_env.clone() });
+                    if ui.button(format!(
+                        "list-models-{}", e.id)).clicked() {
+                        let url = e.base_url.clone();
+                        let key_env = e.api_key_env.clone();
+                        let sink = state.provider_models.clone();
+                        let note = state.provider_note.clone();
+                        std::thread::spawn(move || {
+                            let key = if key_env.is_empty() { None }
+                                else { std::env::var(&key_env).ok() };
+                            let adapter =
+                                las_core::providers::
+                                OpenAiCompatAdapter::new(&url, key);
+                            match adapter {
+                                Ok(a) => match a.list_models() {
+                                    Ok(models) => {
+                                        let ids: Vec<String> =
+                                            models.iter().map(|m| m.id
+                                                .clone()).collect();
+                                        *note.lock().unwrap() =
+                                            format!("{} model(s) \
+                                                     discovered",
+                                                    ids.len());
+                                        *sink.lock().unwrap() = ids;
+                                    }
+                                    Err(err) => {
+                                        *note.lock().unwrap() =
+                                            format!("error: {err}");
+                                    }
+                                },
+                                Err(err) => {
+                                    *note.lock().unwrap() =
+                                        format!("error: {err}");
+                                }
+                            }
+                        });
+                    }
+                    if ui.button(format!(
+                        "remove-endpoint-{}", e.id)).clicked() {
+                        let _ = store.delete_endpoint(&e.id);
+                        state.status_line = format!(
+                            "Endpoint {} removed", e.name);
+                    }
+                    ui.end_row();
+                }
+            });
+        let note = state.provider_note.lock().unwrap().clone();
+        if !note.is_empty() { ui.label(note); }
+
+        // Discovered models with a REAL capability probe each.
+        let models = state.provider_models.lock().unwrap().clone();
+        if !models.is_empty() {
+            ui.add_space(4.0);
+            ui.label("Discovered models (probe = real chat call):");
+            egui::Grid::new("models").striped(true).num_columns(2)
+                .show(ui, |ui| {
+                    ui.strong("Model"); ui.strong("Probe");
+                    ui.end_row();
+                    for m in &models {
+                        ui.label(m);
+                        if ui.button(format!("probe-{m}"))
+                            .clicked() {
+                            let url = endpoints[0].base_url.clone();
+                            let model = m.clone();
+                            let log = state.probe_log.clone();
+                            std::thread::spawn(move || {
+                                let adapter =
+                                    las_core::providers::
+                                    OpenAiCompatAdapter::new(
+                                        &url, None);
+                                let line = match adapter {
+                                    Ok(a) => match a.probe(&model) {
+                                        Ok(r) => format!(
+                                            "{model}: OK - \
+                                             {} chars, {}/{} tokens",
+                                            r.content.len(),
+                                            r.tokens_in,
+                                            r.tokens_out),
+                                        Err(e) => format!(
+                                            "{model}: FAILED - {e}"),
+                                    },
+                                    Err(e) => format!(
+                                        "{model}: FAILED - {e}"),
+                                };
+                                log.lock().unwrap().push(line);
+                            });
+                        }
+                        ui.end_row();
+                    }
+                });
+            let log = state.probe_log.lock().unwrap().clone();
+            for line in log.iter().rev().take(6) {
+                ui.label(line);
+            }
+        }
+    }
+    ui.separator();
+
+    // Runtime: real model turns through the fair scheduler.
+    ui.heading("Runtime");
+    match &state.runtime {
+        Some(handle) => {
+            let status = handle.status.lock().unwrap().clone();
+            ui.label(format!("Runtime {status}"));
+            if ui.button("Stop runtime").clicked() {
+                if let Some(mut h) = state.runtime.take() {
+                    h.stop();
+                }
+                state.status_line = "Runtime stopped".into();
+            }
+        }
+        None => {
+            ui.label("Runtime not started - starting it connects \
+                      every agent turn to its provider endpoint \
+                      through the fair scheduler.");
+            if ui.button("Start runtime").clicked() {
+                match crate::bootstrap::RuntimeHandle::start(
+                    store.clone()) {
+                    Ok(handle) => {
+                        state.status_line = "Runtime started"
+                            .into();
+                        state.runtime = Some(handle);
+                    }
+                    Err(e) => state.status_line =
+                        format!("start failed: {e}"),
+                }
+            }
+        }
+    }
+}
+
+/// Activity & History: what actually happened - recent deliveries
+/// from the agent store plus the VERIFIED legacy run history written
+/// by the Python engine on this data directory.
+pub fn history_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Activity & History");
+    let store = state.store.clone();
+
+    ui.label("Recent message deliveries:");
+    let recent = store.recent_inbox(20).unwrap_or_default();
+    egui::ScrollArea::vertical().id_salt("activity-scroll")
+        .max_height(180.0).show(ui, |ui| {
+            egui::Grid::new("activity").striped(true)
+                .num_columns(5).show(ui, |ui| {
+                    ui.strong("Id"); ui.strong("From");
+                    ui.strong("To"); ui.strong("Kind");
+                    ui.strong("State"); ui.end_row();
+                    for e in &recent {
+                        ui.label(e.id.to_string());
+                        ui.label(&e.sender);
+                        ui.label(&e.recipient);
+                        ui.label(&e.kind);
+                        ui.label(&e.delivery_state);
+                        ui.end_row();
+                    }
+                    if recent.is_empty() {
+                        ui.label("(nothing delivered yet)");
+                        ui.end_row();
+                    }
+                });
+        });
+    ui.separator();
+
+    ui.label("Legacy runs (written by the Python engine on this \
+              data directory; the hash chain is verified on read):");
+    let runs = las_core::migration::legacy_runs(&store)
+        .unwrap_or_default();
+    if runs.is_empty() {
+        ui.label("(no legacy runs found)");
+    } else {
+        if state.history_selected_run.is_empty() {
+            state.history_selected_run = runs[0].0.clone();
+        }
+        egui::Grid::new("runs").striped(true).num_columns(4)
+            .show(ui, |ui| {
+                ui.strong("Run"); ui.strong("Events");
+                ui.strong("Last event"); ui.strong("Action");
+                ui.end_row();
+                for (run_id, count, last) in &runs {
+                    ui.label(run_id);
+                    ui.label(count.to_string());
+                    ui.label(last);
+                    if ui.button(format!("open-{run_id}"))
+                        .clicked() {
+                        state.history_selected_run =
+                            run_id.clone();
+                    }
+                    ui.end_row();
+                }
+            });
+        let selected = state.history_selected_run.clone();
+        ui.add_space(4.0);
+        ui.label(format!("Events of {selected} (newest first):"));
+        match las_core::migration::legacy_events(&store, &selected) {
+            Ok(events) => {
+                ui.label(format!(
+                    "hash chain verified - {} events intact",
+                    events.len()));
+                egui::ScrollArea::vertical()
+                    .id_salt("events-scroll")
+                    .max_height(200.0).show(ui, |ui| {
+                        egui::Grid::new("events").striped(true)
+                            .num_columns(3).show(ui, |ui| {
+                                ui.strong("Seq");
+                                ui.strong("Type");
+                                ui.strong("When"); ui.end_row();
+                                for e in events.iter().rev() {
+                                    ui.label(e.seq.to_string());
+                                    ui.label(&e.kind);
+                                    ui.label(&e.ts);
+                                    ui.end_row();
+                                }
+                            });
+                    });
+            }
+            Err(e) => {
+                // A broken chain is reported, never hidden.
+                ui.label(format!("CHAIN REFUSED: {e}"));
+            }
+        }
+    }
 }

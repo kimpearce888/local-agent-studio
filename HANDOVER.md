@@ -46,16 +46,16 @@ reference and migration source, kept runnable for parity tests.
 
 ## What is NOT done (do not claim otherwise)
 
-- The desktop does not yet START the runtime with the production
-  responder (real model turns through the scheduler are wired and
-  tested at the library level; the Providers & Models screen and the
-  runtime bootstrapping from the UI are the next action), context
-  compaction for growing sessions (rollover exists, token-aware
-  assembly does not), projects/workspaces/artifacts as first-class
-  entities, MCP client, hardened web fetch, Landlock sandboxing
-  (audit items 5, 10, 12), scenario 19.7/19.8 walk-throughs, AppImage
-  (the .deb is built and structurally verified; root installation
-  testing is environment-blocked), version unification.
+- Context assembly is minimal (system prompt + the single inbound
+  message; token-budgeted transcript/memory assembly is the next
+  action), agent replies are not yet routed back into the sender's
+  inbox for multi-turn agent-to-agent conversation, projects/
+  workspaces/artifacts as first-class entities, MCP client, hardened
+  web fetch, Landlock sandboxing (audit items 5, 10, 12), the Tools &
+  Integrations screen. Packaging: .deb AND AppImage are built and
+  structurally verified; INSTALLING/RUNNING them needs root/FUSE -
+  environment-blocked, recorded honestly. Versions are unified at
+  0.4.0.
 - Shared inference scheduler, context rollover, MCP client, hardened
   web fetch, Landlock sandboxing for run_command (audit items 5, 10,
   12), recursive module registry (item 14).

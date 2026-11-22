@@ -252,3 +252,225 @@ fn dashboard_updates_after_agent_created_via_form() {
     h.get_all(by().label("3")).next().unwrap();
 }
 
+
+// -- 19.7: permission surfaces in the UI drive real enforcement ----
+
+#[test]
+fn s19_7_revoking_a_rule_restores_default_deny() {
+    let store = store_with_team();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Teams,
+        rule_src: "researcher".into(),
+        rule_dst: "developer".into(),
+        rule_message: true, rule_call: true, rule_delegate: true,
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    // Grant through the form...
+    h.get_all(by().label("Save rule")).next().unwrap().click();
+    h.run();
+    let granted = store.comm_rule("researcher", "developer").unwrap();
+    assert!(granted.may_message && granted.may_call);
+    // ...then revoke through the row button: default-deny returns.
+    h.get_all(by().label("revoke-researcher->developer"))
+        .next().unwrap().click();
+    h.run();
+    let revoked = store.comm_rule("researcher", "developer").unwrap();
+    assert!(!revoked.may_message && !revoked.may_call
+            && !revoked.may_delegate);
+    // The engine ACTUALLY enforces the revocation.
+    let refused = store.send_message(
+        "researcher", "developer", "let me in", "k-197",
+        las_core::communication::BusyMode::Queue);
+    assert!(refused.is_err(),
+            "revoked topology must refuse agent->agent messages");
+}
+
+#[test]
+fn s19_7_tool_grants_are_explicit_and_persisted() {
+    let store = store_with_team();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Agents,
+        new_agent_name: "Scribe".into(),
+        new_agent_prompt: "You take notes.".into(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    // Nothing granted implicitly: tick exactly one tool.
+    h.get_all(by().label("grant-write_file")).next().unwrap().click();
+    h.run();
+    h.get_all(by().label("Create agent")).next().unwrap().click();
+    h.run();
+    let agent = store.agent("scribe").unwrap();
+    let grants: Vec<String> = serde_json::from_str(
+        &agent.profile.tool_grants_json).unwrap();
+    assert_eq!(grants, vec!["write_file".to_string()],
+               "only the explicitly ticked tool is granted");
+}
+
+// -- 19.8: the full desktop walk-through with REAL model turns ------
+
+/// A stoppable loopback OpenAI-compatible server for the desktop
+/// walk-through (same contract as the las-core providers tests).
+struct TestServer {
+    base: String,
+    running: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        self.running.store(
+            false, std::sync::atomic::Ordering::SeqCst);
+        if let Some(h) = self.handle.take() { let _ = h.join(); }
+    }
+}
+
+fn start_test_server() -> TestServer {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let running = std::sync::Arc::new(
+        std::sync::atomic::AtomicBool::new(true));
+    let flag = running.clone();
+    let chat_body = r#"{"choices":[{"message":{"content":
+        "Hello from the model"}}],"usage":{"prompt_tokens":9,
+        "completion_tokens":4}}"#.to_string();
+    let models_body = r#"{"data":[{"id":"qwen3-8b"}]}"#.to_string();
+    let handle = std::thread::spawn(move || {
+        loop {
+            if !flag.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut reader = BufReader::new(
+                        stream.try_clone().unwrap());
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        continue;
+                    }
+                    let parts: Vec<&str> =
+                        line.split_whitespace().collect();
+                    if parts.len() < 2 { continue; }
+                    let path = parts[1].to_string();
+                    let mut length = 0usize;
+                    loop {
+                        let mut h = String::new();
+                        if reader.read_line(&mut h).unwrap_or(0) == 0
+                            || h.trim().is_empty() { break; }
+                        if let Some(v) = h.to_lowercase()
+                            .strip_prefix("content-length:") {
+                            length = v.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    let mut body = vec![0u8; length];
+                    if length > 0 {
+                        let _ = reader.read_exact(&mut body);
+                    }
+                    let payload = match path.as_str() {
+                        "/v1/models" => models_body.as_str(),
+                        _ => chat_body.as_str(),
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: \
+                         application/json\r\nContent-Length: {}\r\n\
+                         Connection: close\r\n\r\n{payload}",
+                        payload.len());
+                    let _ = stream.write_all(resp.as_bytes());
+                    let _ = stream.flush();
+                }
+                Err(e) if e.kind()
+                    == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(
+                        std::time::Duration::from_millis(5));
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    TestServer { base: format!("http://{addr}"), running,
+                 handle: Some(handle) }
+}
+
+#[test]
+fn s19_8_full_desktop_walkthrough_with_real_model_turn() {
+    let server = start_test_server();
+    let store = store_with_team();
+
+    // 1. Register the endpoint through the UI form.
+    let mut h = harness_with(AppState {
+        nav: NavArea::Providers,
+        endpoint_name: "lmstudio".into(),   // matches agent profiles
+        endpoint_url: server.base.clone(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    h.get_all(by().label("Save endpoint")).next().unwrap().click();
+    h.run();
+    assert_eq!(store.list_endpoints().unwrap().len(), 1);
+
+    // 2. Start the runtime through the UI.
+    h.get_all(by().label("Start runtime")).next().unwrap().click();
+    h.run();
+    let runtime = h.state_mut().runtime.as_ref().map(|r|
+        r.is_running()).unwrap_or(false);
+    assert!(runtime, "the runtime is running");
+
+    // 3. Send a message through the composer.
+    h.state_mut().nav = NavArea::Inbox;
+    h.state_mut().compose_to = "researcher".into();
+    h.state_mut().compose_text = "hello model".into();
+    h.run();
+    h.get_all(by().label("Send message")).next().unwrap().click();
+    h.run();
+
+    // 4. The runtime delivers it through the fair scheduler and the
+    //    REAL HTTP round-trip: poll the store for the acked turn.
+    let mut acked_with_reply = false;
+    for _ in 0..200 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        if let Ok(inbox) = store.inbox_for("researcher") {
+            if let Some(entry) = inbox.first() {
+                if entry.delivery_state == "acked" {
+                    let history = store.agent_history("researcher")
+                        .unwrap_or_default();
+                    if history.iter().any(|m| m.content.contains(
+                        "Hello from the model")) {
+                        acked_with_reply = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    assert!(acked_with_reply,
+            "the real model turn completed: queued -> delivered -> \
+             acked -> replied through HTTP");
+
+    // 5. The reply is VISIBLE in the UI (Sessions transcript).
+    h.state_mut().nav = NavArea::Sessions;
+    h.state_mut().sessions_selected_agent = "researcher".into();
+    h.state_mut().sessions_selected_session =
+        "researcher-s-main".into();
+    h.run();
+    h.get_all(by().label_contains("Hello from the model"))
+        .next().expect("the model reply is on screen");
+
+    // 6. The activity view shows the completed delivery.
+    h.state_mut().nav = NavArea::History;
+    h.run();
+    h.get_all(by().label("acked")).next()
+        .expect("the acked delivery is in the activity log");
+
+    // 7. Clean shutdown through the UI.
+    h.state_mut().nav = NavArea::Providers;
+    h.run();
+    h.get_all(by().label("Stop runtime")).next().unwrap().click();
+    h.run();
+    assert!(h.state_mut().runtime.is_none());
+    drop(h);
+    drop(server);
+}

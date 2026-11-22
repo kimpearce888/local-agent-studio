@@ -1887,6 +1887,7 @@ dependencies = [
  "egui_kittest",
  "las-core",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
