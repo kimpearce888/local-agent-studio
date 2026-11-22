@@ -150,7 +150,7 @@ def verify_deb(deb: Path) -> bool:
     info = subprocess.run(["dpkg-deb", "-I", str(deb)],
                           capture_output=True, text=True).stdout
     for field in ("Package: local-agent-studio",
-                  "Version: 0.4.1",
+                  "Version: 0.4.2",
                   "Architecture: amd64",
                   "Depends:"):
         if field not in info:

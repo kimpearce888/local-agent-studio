@@ -64,3 +64,37 @@ class TestIncrementalReplay(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRunOnFailedRun(unittest.TestCase):
+    """Regression (found by the real-model worker benchmark): run()
+    over an ALREADY-failed run must return immediately.
+
+    step() used to return the raw status "failed" as the result kind,
+    which run()'s break list does not contain (it expects
+    "run_failed") - so run() spun forever appending StepResults until
+    the OOM killer took the process at ~3GB rss.  The resume driver
+    in the kill/resume benchmark hits exactly this path whenever the
+    live model fails a task before the kill."""
+
+    def test_run_over_failed_run_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = chain_plan(3)
+            engine = Engine(tmp)
+            run_id = engine.create_run(plan)
+            garbage = [{"text": f"rambling turn {i}, no handoff block"}
+                       for i in range(4)]
+            registry = ProviderRegistry()
+            registry.register("mock", MockAdapter(garbage))
+            cfg = DriverConfig(failure_policy="stop")
+            driver = engine.driver(run_id, registry,
+                                   {"default": ("mock", "mock-model")}, cfg)
+            results = driver.run()               # t1 fails -> run stops
+            self.assertIn(results[-1].kind, ("task_failed", "run_failed"))
+            self.assertEqual(engine.state(run_id).status, "failed")
+            # The kill path: a fresh (resume) driver runs the failed run.
+            resume = engine.driver(run_id, registry,
+                                   {"default": ("mock", "mock-model")}, cfg)
+            resumed = resume.run()               # used to spin forever
+            self.assertEqual(resumed[-1].kind, "run_failed")
+            self.assertEqual(resume.state.status, "failed")

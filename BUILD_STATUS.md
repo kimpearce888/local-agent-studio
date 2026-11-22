@@ -690,4 +690,5 @@ What genuinely remains for a human with the target machine:
 which this sandbox physically lacks), and the PRD reference-model
 benchmark numbers (they need the external reference endpoint; the
 pipeline that will produce them is now proven end to end against a
-real server).
+real server, and the OOM bug that masked the worker-phase numbers
+is fixed).

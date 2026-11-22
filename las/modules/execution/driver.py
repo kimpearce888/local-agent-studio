@@ -97,8 +97,13 @@ class RunDriver:
             self.state_refetch()
             return StepResult("cancelled")
         if st.status in ("succeeded", "failed", "cancelled"):
-            return StepResult(st.status if st.status != "succeeded" else "run_succeeded",
-                              code=st.failure_code)
+            # Map to the run_* kinds run() breaks on.  Returning the raw
+            # status "failed" made run() spin forever appending results
+            # (found by the real-model worker benchmark: the OOM kill at
+            # ~3GB was this loop, not the attempt machinery).
+            label = ("run_succeeded" if st.status == "succeeded" else
+                     "run_failed" if st.status == "failed" else "cancelled")
+            return StepResult(label, code=st.failure_code)
         if st.status == "paused":
             return StepResult("paused", detail=st.paused_reason)
         tid = st.next_task()

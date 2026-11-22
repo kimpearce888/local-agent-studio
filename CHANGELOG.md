@@ -166,6 +166,22 @@ not follow-ups.
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
 
+## [0.4.2] - 2026-11-22
+
+- **Fixed: run() over an already-failed run never terminated**
+  (found by the real-model worker benchmark, fixed and verified the
+  same day).  step() returned the raw run status "failed" as its
+  result kind; run()'s break list expects "run_failed" - so a
+  resume driver calling run() on a failed run spun forever
+  appending StepResults until the OOM killer took the process
+  (~3.2GB rss, reproduced deterministically in-process at
+  scripts/repro_worker_oom.py).  The kill/resume benchmark hit this
+  whenever the live model failed a task before the kill, which is
+  why the worker-phase real-model numbers were previously
+  unreachable.  Statuses now map to their run_* kinds; regression
+  test TestRunOnFailedRun added; the repro completes in 0.0s / 26MB
+  where it previously OOM'd.  Suite: 318 OK.
+
 ## [0.4.1] - 2026-11-22
 
 The real-model benchmark session made the product better; this
