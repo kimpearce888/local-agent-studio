@@ -121,7 +121,8 @@ def _seed(engine, run_id, goal) -> None:
 
 
 def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
-                    model: str, kills: int = 0) -> dict:
+                    model: str, kills: int = 0,
+                    tool_calling: bool = True) -> dict:
     """The RUN phase against a LIVE model with a known-good plan.
 
     Weak local models cannot produce valid plans (measured - see
@@ -149,7 +150,8 @@ def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
         registry.register(provider_id, adapter)
         driver = engine.driver(run_id, registry,
                                {"default": (provider_id, model)},
-                               DriverConfig(failure_policy="stop"))
+                               DriverConfig(failure_policy="stop",
+                                            tool_calling=tool_calling))
         if kills:
             steps = rng.randint(1, max(1, len(plan.tasks) - 1))
             for _ in range(steps):
@@ -159,7 +161,8 @@ def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
             engine.driver(run_id, registry,
                           {"default": (provider_id, model)},
                           DriverConfig(
-                              failure_policy="stop")).run()
+                              failure_policy="stop",
+                              tool_calling=tool_calling)).run()
             state = engine.state(run_id)
             if state.status == "succeeded":
                 metrics["runs_succeeded"] += 1
@@ -200,18 +203,27 @@ def real_adapter(preset: str, base_url: str, timeout: float = 300.0):
 
 
 def _real_driver(engine: Engine, run_id: str, provider_id: str,
-                 adapter, model: str, config=None):
+                 adapter, model: str, tool_calling: bool = True,
+                 config=None):
+    """A driver for a LIVE provider.  ``tool_calling`` is the capability
+    probe's finding for the model: the engine defaults DriverConfig to
+    native tool calls, so a server that accepts tools on the wire but
+    never returns them (the z-ai proxy, any toolless Ollama model)
+    must run in TEXT tool mode - otherwise the model is asked to do
+    file work with no tool mechanism at all and invents its own
+    syntax (found by the reference benchmark: 0/30, then 0/12)."""
     registry = ProviderRegistry()
     registry.register(provider_id, adapter)
+    cfg = config or DriverConfig(failure_policy="stop",
+                                 tool_calling=tool_calling)
     return engine.driver(run_id, registry,
-                         {"default": (provider_id, model)},
-                         config or DriverConfig(failure_policy="stop"))
+                         {"default": (provider_id, model)}, cfg)
 
 
 def run_corpus_real(data_dir: str, goals, adapter, provider_id: str,
                     model: str, json_schema_supported: bool = True,
                     params: dict | None = None,
-                    on_goal=None) -> dict:
+                    tool_calling: bool = True, on_goal=None) -> dict:
     """The corpus with a LIVE model: the same goals, the same metrics,
     no scripted replies.  What this measures is the MODEL - the harness
     itself was validated by the mock dry-run."""
@@ -239,7 +251,7 @@ def run_corpus_real(data_dir: str, goals, adapter, provider_id: str,
         run_id = engine.create_run(result.plan)
         _seed(engine, run_id, goal)
         _real_driver(engine, run_id, provider_id, adapter,
-                     model).run()
+                     model, tool_calling=tool_calling).run()
         state = engine.state(run_id)
         if state.status == "succeeded":
             metrics["completed_without_help"] += 1
@@ -257,6 +269,7 @@ def run_corpus_real(data_dir: str, goals, adapter, provider_id: str,
 def kill_cycles_real(data_dir: str, cycles: int, goals, adapter,
                      provider_id: str, model: str,
                      json_schema_supported: bool = True,
+                     tool_calling: bool = True,
                      seed: int = 20261121) -> dict:
     """Kill/resume against a LIVE model.  Abandon the driver at a task
     boundary, then resume the run through the real provider and require
@@ -280,13 +293,14 @@ def kill_cycles_real(data_dir: str, cycles: int, goals, adapter,
         run_id = engine.create_run(plan)
         _seed(engine, run_id, goal)
         driver = _real_driver(engine, run_id, provider_id, adapter,
-                              model)
+                              model, tool_calling=tool_calling)
         steps = rng.randint(1, max(1, len(plan.tasks) - 1))
         for _ in range(steps):
             driver.step()
         # Abandon this driver (the "kill"); a fresh one resumes the run
         # through the same live provider.
-        _real_driver(engine, run_id, provider_id, adapter, model).run()
+        _real_driver(engine, run_id, provider_id, adapter, model,
+                     tool_calling=tool_calling).run()
         state = engine.state(run_id)
         if state.status == "succeeded":
             result["resumed_ok"] += 1

@@ -219,7 +219,8 @@ def run_attempt(d, task: Task, attempt_no: int, temperature: float) -> AttemptOu
                         "arguments_hash": hashlib.sha256(
                             canonical_json(args).encode()).hexdigest(),
                         "result": decision.result[:2000], "duration_ms": 0})
-                    result_text = decision.result
+                    result_text = (f"TOOL RESULT ({tc.id}): {decision.result}"
+                                   )
                 else:
                     denial_count += 1
                     d.store.append(d.run_id, "tool.denied", {

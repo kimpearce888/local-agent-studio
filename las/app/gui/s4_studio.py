@@ -455,7 +455,10 @@ class StudioScreen(ttk.Frame):
             failure_policy=caps("failure_policy") or "ask",
             cap_tokens_run=int(caps("cap_tokens_run") or 200000),
             cap_wall_minutes_run=float(caps("cap_wall_minutes_run") or 60),
-            context_length=int(caps("context_length") or 8192))
+            context_length=int(caps("context_length") or 8192),
+            # "text" = the provider's models cannot call tools; the
+            # worker then uses the text tool protocol instead.
+            tool_calling=caps("tool_mode") != "text")
         run_id = self.app.engine.create_run(
             self.plan, models=models)
         self.run_id = run_id

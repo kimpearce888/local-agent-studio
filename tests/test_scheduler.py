@@ -389,12 +389,12 @@ class TestFailurePolicies(SchedulerTestBase):
 
     def test_permission_denied_after_second_denial(self):
         plan = make_plan()
-        plan.tasks[0].tools = ["read_file"]      # write_file not granted
+        plan.tasks[0].tools = ["read_file"]      # shell not granted
         script = [
-            {"tool_calls": [{"name": "write_file",
-                             "arguments": {"path": "x.md", "content": "x"}}]},
-            {"tool_calls": [{"name": "write_file",
-                             "arguments": {"path": "x.md", "content": "x"}}]},
+            {"tool_calls": [{"name": "run_command",
+                             "arguments": {"command": ["ls"]}}]},
+            {"tool_calls": [{"name": "run_command",
+                             "arguments": {"command": ["ls"]}}]},
         ]
         engine, run_id, driver, results = run_with_mock(
             plan, script, self.data_dir, DriverConfig(failure_policy="stop"))

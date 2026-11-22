@@ -152,8 +152,81 @@ class TestEstimate(unittest.TestCase):
         self.assertEqual(parsed[1]["path"], "a.md")
 
     def test_parse_text_tool_call_malformed(self):
-        self.assertIsNone(parse_text_tool_call("<tool_call>{broken json}</tool_call>"))
+        self.assertIsNone(parse_text_tool_call("{broken json}"))
         self.assertIsNone(parse_text_tool_call("no tool call here"))
+
+    def test_parse_xml_tool_syntax(self):
+        # The exact form the reference model produced on a live run
+        # (2026-11-22, goal 1) after the no-block nudges.
+        parsed = parse_text_tool_call(
+            'I will read the notes.\n<tool:read>\n'
+            '<path>sources/market-notes-2026.md</path>\n</tool:read>')
+        self.assertEqual(parsed[0], "read")
+        self.assertEqual(parsed[1], {"path": "sources/market-notes-2026.md"})
+
+    def test_parse_xml_tool_syntax_multiple_args(self):
+        parsed = parse_text_tool_call(
+            "<tool:write_file><path>a.md</path><content>hello</content>"
+            "</tool:write_file>")
+        self.assertEqual(parsed[0], "write_file")
+        self.assertEqual(parsed[1], {"path": "a.md", "content": "hello"})
+
+    def test_parse_tool_code_syntax(self):
+        # The form the 0.4.3 reference run measured (YAML arguments).
+        parsed = parse_text_tool_call(
+            "<tool_code>name: read_file\narguments:\n  path: facts.md"
+            "</tool_code>")
+        self.assertEqual(parsed[0], "read_file")
+        self.assertEqual(parsed[1], {"path": "facts.md"})
+
+    def test_parse_tool_code_json_body(self):
+        parsed = parse_text_tool_call(
+            '<tool_code>{"name": "list_files", "arguments": {}}'
+            "</tool_code>")
+        self.assertEqual(parsed[0], "list_files")
+        self.assertEqual(parsed[1], {})
+
+    def test_parse_tool_code_bare_name_form(self):
+        # The third measured variant (live run, 2026-11-22): the tool
+        # name on the first line, key: value arguments after it.
+        parsed = parse_text_tool_call(
+            "<tool_code>\nread_file\npath: sources/market-notes-2026.md"
+            "\n</tool_code>")
+        self.assertEqual(parsed[0], "read_file")
+        self.assertEqual(parsed[1],
+                         {"path": "sources/market-notes-2026.md"})
+
+    def test_prose_with_xml_words_is_not_a_tool_call(self):
+        self.assertIsNone(parse_text_tool_call(
+            "The plan mentions <tool:read> in its documentation section."))
+        self.assertIsNone(parse_text_tool_call(
+            "Use tool_code carefully."))
+
+
+    def test_parse_bare_json_tool_call(self):
+        # What the reference model emitted once text mode was wired
+        # (live run 2026-11-22): the documented JSON line, bare - the
+        # parser used to require the wrapped form and executed nothing.
+        parsed = parse_text_tool_call(
+            '{"name": "list_files", "arguments": {}}')
+        self.assertEqual(parsed[0], "list_files")
+        self.assertEqual(parsed[1], {})
+        parsed = parse_text_tool_call(
+            'I will read the sales file.\n'
+            '{"name": "read_file", "arguments": '
+            '{"path": "sales-q3-2026.csv"}}')
+        self.assertEqual(parsed[0], "read_file")
+        self.assertEqual(parsed[1], {"path": "sales-q3-2026.csv"})
+
+    def test_handoff_message_json_is_not_a_tool_call(self):
+        # The guard: a final handoff message contains JSON too; it must
+        # be treated as the final message, never as a tool call.
+        obj = ('{"task_id": "t1", "status": "done", "summary": "x", '
+               '"key_facts": [{"fact": "f", "source": "file:a"}], '
+               '"binding_constraints": [], "decisions": [], '
+               '"open_issues": [], "deliverables": []}')
+        text = "Finished.\n<handoff>\n" + obj + "\n</handoff>"
+        self.assertIsNone(parse_text_tool_call(text))
 
 
 def _handoff(task_id: str, summary: str, facts=None) -> Handoff:

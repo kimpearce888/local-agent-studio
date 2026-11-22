@@ -33,7 +33,8 @@ Rules:
 3. Dependencies may name only earlier tasks.
 4. Copy every hard requirement in the goal (words such as must, never, only, before, requires approval) into constraints exactly as written, one per requirement, and add a prerequisite, an authority and a fallback where the goal implies them.
 5. Add a collector task whenever results from several tasks must be combined, and a final task that produces the deliverable.
-6. Reply with JSON only."""
+6. Grant each task the workspace tools it needs in "tools", or the run DENIES the missing ones: a task that reads input files needs read_file (plus list_files and search_files to find them); a task that writes a deliverable needs write_file. Available tools: list_files, read_file, write_file, append_file, search_files, patch_file.
+7. Reply with JSON only."""
 
 MAX_REPAIR_ROUNDS = 3
 

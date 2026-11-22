@@ -61,7 +61,10 @@ class PermissionBroker:
         reviewed it was approved (spec 5.9).
         """
         a = b = c = False
-        for tool in task.tools:
+        # The effective grant set (matching check()/tool_defs): the
+        # baseline file tools plus the task's beyond-workspace grants.
+        extra = [t for t in task.tools if t not in WORKSPACE_TOOLS]
+        for tool in list(WORKSPACE_TOOLS) + extra:
             flags = TOOL_FLAGS.get(tool, (True, True, True))  # unknown tool = worst case
             a = a or flags[0]
             b = b or flags[1]
@@ -80,7 +83,13 @@ class PermissionBroker:
     def check(self, tool: str, args: dict, task: Task) -> BrokerDecision:
         if tool not in KNOWN_TOOLS:
             return BrokerDecision(False, "unknown-tool", "")
-        if tool not in task.tools:
+        # Workspace file tools are the baseline (PRD least agency: only
+        # tools BEYOND workspace files are off until granted): they are
+        # jailed, size-capped and audited, so a model-written plan that
+        # under-lists them must not starve the run - measured on the
+        # reference model: read_file denied on t3 of 8, the run died.
+        # Beyond-workspace tools (shell, web) still need the task grant.
+        if tool not in WORKSPACE_TOOLS and tool not in task.tools:
             return BrokerDecision(False, "not-in-allowlist", "")
         problem = _validate_args(tool, args)
         if problem:
@@ -128,7 +137,12 @@ class PermissionBroker:
                 True, result=f"ERROR ({exc.rule}): {exc.message}")
 
     def tool_defs(self, task: Task) -> list[ToolDef]:
-        return [TOOL_DEFS[t] for t in task.tools if t in TOOL_DEFS]
+        # Advertise what the task may actually call (the baseline file
+        # tools plus its beyond-workspace grants) - a native-tools model
+        # that is not shown a tool will never call it.
+        extra = [t for t in task.tools if t not in WORKSPACE_TOOLS]
+        return [TOOL_DEFS[t] for t in list(WORKSPACE_TOOLS) + extra
+                if t in TOOL_DEFS]
 
 
 def _validate_args(tool: str, args: object) -> str:

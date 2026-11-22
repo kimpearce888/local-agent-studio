@@ -397,6 +397,16 @@ def _source_ok(source: str, workspace) -> bool:
     if s.startswith(("message:", "tool:", "file:", "user:")):
         return len(s.split(":", 1)[1]) > 0
     if workspace is not None:
+        # Models wrap file paths in verbose prefixes ("workspace file:
+        # a.csv", "workspace: a.csv") - measured on the reference
+        # model, where one such prefix killed an otherwise perfect
+        # handoff twice.  H-06's point is traceability to a real
+        # input, not spelling discipline: strip the known prefixes and
+        # accept anything that resolves to an existing workspace file.
+        for prefix in ("workspace file:", "workspace:", "file:"):
+            if s.lower().startswith(prefix):
+                s = s[len(prefix):].strip()
+                break
         try:
             return workspace.exists(s)
         except Exception:

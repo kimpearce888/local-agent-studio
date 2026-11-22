@@ -50,9 +50,10 @@ def cmd_run(args) -> int:
             print(f"{code}: {msg}\nFix: {fix}")
             return EXIT_PROVIDER
 
+    tool_calling = not getattr(args, "text_tools", False)
     findings = lint(plan, context_length=args.context_length,
                     provider_reachable=reachable, default_provider_id=provider_id,
-                    tool_calling=True)
+                    tool_calling=tool_calling)
     errs = lint_errors(findings)
     if errs:
         print(message("PLAN-INVALID", n=len(errs)))
@@ -88,6 +89,10 @@ def cmd_run(args) -> int:
 
 def _build_config(args) -> DriverConfig:
     return DriverConfig(
+        # A provider whose models cannot call tools must run in text
+        # tool mode, or the model has no tool mechanism at all (the
+        # reference benchmark measured exactly that failure).
+        tool_calling=not getattr(args, "text_tools", False),
         failure_policy=getattr(args, "on_failure", None) or "ask",
         cap_tokens_run=int(getattr(args, "cap_tokens", 0)
                            or DEFAULTS["cap_tokens_run"]),

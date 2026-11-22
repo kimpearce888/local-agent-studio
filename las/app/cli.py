@@ -71,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--planner-model")
     p.add_argument("--worker-model")
     p.add_argument("--on-failure", choices=("ask", "stop", "skip"), default="ask")
+    p.add_argument("--text-tools", action="store_true",
+                   help="run without native tool calling (providers whose "
+                        "models cannot call tools; the worker uses the "
+                        "text tool protocol instead)")
     p.add_argument("--cap-tokens", type=int, default=2_000_000)
     p.add_argument("--cap-wall-minutes", type=int, default=480)
     p.add_argument("--context-length", type=int, default=8192)

@@ -147,8 +147,22 @@ class SettingsScreen(ttk.Frame):
             row=i, column=1, sticky="w", padx=6)
         policy.trace_add("write", lambda *_: self._set(
             "failure_policy", policy.get()))
+        ttk.Label(tab, text="Tool calls").grid(
+            row=i + 1, column=0, sticky="w", padx=10, pady=4)
+        mode = tk.StringVar(value=self._get("tool_mode", "native"))
+        ttk.Combobox(tab, textvariable=mode, state="readonly",
+                     values=["native", "text"]).grid(
+            row=i + 1, column=1, sticky="w", padx=6)
+        mode.trace_add("write", lambda *_: self._set(
+            "tool_mode", mode.get()))
+        ttk.Label(tab, text="Use 'text' when the provider's models "
+                           "cannot call tools (Providers screen shows "
+                           "no tools chip).",
+                  style="Muted.TLabel").grid(
+            row=i + 2, column=0, columnspan=2, sticky="w",
+                    padx=10, pady=4)
         ttk.Label(tab, text="Queued runs: one at a time (fixed in 1.0)",
-                  style="Muted.TLabel").grid(row=i + 1, column=0,
+                  style="Muted.TLabel").grid(row=i + 3, column=0,
                                              columnspan=2, sticky="w",
                                              padx=10, pady=4)
 

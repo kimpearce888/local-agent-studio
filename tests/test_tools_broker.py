@@ -67,7 +67,16 @@ class TestBrokerDecisions(unittest.TestCase):
         broker = self.broker()
         task = Task(id="t1", title="T", instructions="Do the thing carefully.",
                     tools=["read_file"])
+        # Workspace file tools are the baseline (PRD least agency); a
+        # beyond-workspace tool the task did not grant is still denied.
         decision = broker.check("write_file", {"path": "a.md", "content": "x"}, task)
+        self.assertTrue(decision.allowed)
+        decision = broker.check(
+            "web_fetch", {"url": "https://example.com"}, task)
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.rule, "not-in-allowlist")
+        decision = broker.check(
+            "run_command", {"command": ["ls"]}, task)
         self.assertFalse(decision.allowed)
         self.assertEqual(decision.rule, "not-in-allowlist")
 

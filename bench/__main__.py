@@ -63,6 +63,7 @@ def _run_real(args, data_dir: str) -> int:
     corpus = run_corpus_real(
         data_dir, goals, adapter, args.provider, model,
         json_schema_supported=caps.json_schema,
+        tool_calling=caps.tool_calling,
         on_goal=lambda i, g, status: print(
             f"  goal {i + 1}/{len(goals)} [{g.kind}] {status} "
             f"({time.monotonic() - t0:.0f}s)"))
@@ -79,7 +80,8 @@ def _run_real(args, data_dir: str) -> int:
     kill_pool = [g for g in build_corpus(100) if g.kind != "gated"][:20]
     kill = kill_cycles_real(data_dir, kills, kill_pool, adapter,
                             args.provider, model,
-                            json_schema_supported=caps.json_schema)
+                            json_schema_supported=caps.json_schema,
+                            tool_calling=caps.tool_calling)
 
     # Engine-deterministic gates stay on the mock: cap enforcement and
     # the DEFAULT-configuration network audit are engine behavior, and

@@ -199,5 +199,26 @@ class BenchFixtureTests(unittest.TestCase):
             self.assertEqual(metrics["run_failures"], 0)
 
 
+class SourceLeniencyTests(unittest.TestCase):
+    """H-06 accepts verbose file-path prefixes (measured: 'workspace
+    file: a.csv' killed an otherwise perfect handoff twice)."""
+
+    def test_verbose_prefix_resolves(self):
+        import tempfile
+        from las.modules.handoffs import _source_ok
+        from las.modules.security import Workspace
+        with tempfile.TemporaryDirectory() as d:
+            ws = Workspace(d)
+            ws.write_file("sales-q3-2026.csv", "region\n")
+            self.assertTrue(_source_ok("sales-q3-2026.csv", ws))
+            self.assertTrue(
+                _source_ok("workspace file: sales-q3-2026.csv", ws))
+            self.assertTrue(
+                _source_ok("workspace: sales-q3-2026.csv", ws))
+            self.assertTrue(_source_ok("tool:call_1", ws))
+            self.assertFalse(_source_ok("workspace files", ws))
+            self.assertFalse(_source_ok("", ws))
+
+
 if __name__ == "__main__":
     unittest.main()
