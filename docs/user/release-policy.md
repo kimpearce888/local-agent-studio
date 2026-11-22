@@ -74,12 +74,25 @@ pipeline (never by claim):
   payload. Running it needs FUSE on the target machine, or
   `--appimage-extract` once as a fallback.
 
-Both artifacts live in `dist/` and are rebuilt by
-`scripts/make_deb.py` (deb) and `scripts/make_appimage.py`
-(AppImage); on a headless build host missing one of the dlopen'd
-GUI libraries, extract the distro package and point
-`LAS_SMOKE_LIBDIR` at it - the smoke then mirrors exactly what the
-installed dependencies satisfy on a real desktop. Version strings
+Both artifacts are produced, verified and UPLOADED BY CI on every
+push (the `artifacts` job): download them from any green run's
+artifacts pane.  The job runs on ubuntu-22.04 ON PURPOSE - the
+oldest mainstream userspace we ship to - after ubuntu-latest
+produced binaries requiring GLIBC_2.43 that would not start even
+on Debian 13.  The deb's Depends carries versioned floors derived
+from the binary itself (objdump symbol versions: libc6 >= the
+required GLIBC, libgcc-s1 >= the required GCC), so an install on
+an older distro fails honestly at dpkg instead of at startup.
+
+For release-grade confidence, re-verify on a DIFFERENT machine:
+`python3 scripts/verify_ci_artifacts.py <run-id>` downloads the
+uploaded artifacts, checks the payload and control fields, and
+runs the Xvfb execution smoke on the unpacked binaries.  That
+download-back loop caught the glibc floor, a libc6-i386 Depends
+leak and floors that silently never fired - runner-internal
+verification alone cannot see any of them.  On a rootless host
+missing the dlopen'd GUI libraries, extract the distro packages
+and point `LAS_SMOKE_LIBDIR` at them, as above. Version strings
 are unified at 0.4.0 across the
 Cargo workspace, `pyproject.toml`, `las.__version__` and the meta
 table's `app_version` row, so an artifact version always matches what

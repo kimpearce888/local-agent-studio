@@ -545,6 +545,38 @@ before the last TCP segment arrived).  Rewritten in the providers.rs
 mock pattern (line-oriented headers + exact Content-Length body
 read); 10 consecutive runs green, workspace 141 green.
 
+## Session: CI-produced, download-back-verified artifacts
+
+CI now builds, verifies and uploads both desktop artifacts on
+every push (`artifacts` job), and the artifacts are re-verified on
+THIS machine (Debian 13, glibc 2.41) after download - what
+GitHub Actions uploaded is what actually runs elsewhere:
+
+- Run 50 (ubuntu-latest) was green in CI, but the download-back
+  loop caught the binary requiring GLIBC_2.43 - unstartable on
+  Debian 13 and Ubuntu 24.04 LTS alike.  The job is pinned to
+  ubuntu-22.04 (glibc 2.35 floor; move to an ubuntu:22.04
+  container when the image retires, don't bump the floor).
+- Run 51 exposed Depends bugs: dpkg -S queried by short name
+  matched libc6-i386 (wrong-arch multilib); the versioned floors
+  never fired because objdump prints versions parenthesized AND
+  the prefix slice kept the underscore.  Fixed; the deb now ships
+  `libgcc-s1 (>= 4.2.0), libc6 (>= 2.35), ...`.
+- Run 52 exposed the mirror bug: full-path dpkg -S queries match
+  nothing on ubuntu-22.04's /lib-recorded database.  Resolution
+  now tries both usrmerge spellings, then the short name filtered
+  to x86_64 paths, and the objdump-derived floors are included
+  unconditionally.
+- AppStream: the component id is reverse-DNS
+  (io.github.kimpearce888.local-agent-studio), the desktop files
+  and metainfo filename follow it; appstreamcli (present on
+  runners, absent in this sandbox) validates during the build.
+- Run 53's artifacts, re-verified here: deb unpack + control
+  fields + payload + 3s Xvfb GUI smoke; AppImage self-extraction
+  + payload + same smoke.  Both PASS; sha256 in the run log.
+- scripts/verify_ci_artifacts.py (in-repo) automates the
+  download-back check for any run id.
+
 ## Exact next engineering action
 
 None blocking - the P0 scope, the recorded implementable P1 list
@@ -558,6 +590,7 @@ real-server capability tests and the real-model benchmark (audit
 items 19/20 - harnesses shipped, they need a model server to point
 at), and the final privileged install steps - `dpkg -i` (root) and
 a FUSE-mounted AppImage launch on a target machine; everything
-short of those two steps is now verified here, including the GUI
-actually running.  A tokenizer dependency would only ever be wanted
+short of those two steps is now verified, by CI on the build
+runner AND by download-back on a different distro, including the
+GUI actually running.  A tokenizer dependency would only ever be wanted
 beyond the provider-exact counting already in place.

@@ -106,6 +106,20 @@ not follow-ups.
   rules are now: parent must exist, and the parent CHAIN must be
   acyclic (walked with a seen-set, self-parent included) and
   shallower than 64 levels as a sanity guard.
+- **CI-produced, download-back-verified desktop artifacts**: the
+  new `artifacts` CI job builds, verifies and uploads the .deb and
+  AppImage on every push (ubuntu-22.04, glibc 2.35 floor - pinned
+  after ubuntu-latest produced GLIBC_2.43 binaries that would not
+  start on Debian 13 or Ubuntu 24.04).  The deb's Depends now
+  carries binary-derived versioned floors (libc6/libgcc-s1 via
+  objdump symbol versions) and resolves packages robustly across
+  distro dpkg-database differences (both usrmerge spellings,
+  arch-filtered short names; no more libc6-i386 leaks).  The
+  AppStream component is reverse-DNS with matching desktop-id,
+  metainfo filename and appstreamcli validation during the build.
+  `scripts/verify_ci_artifacts.py` downloads a run's artifacts and
+  re-verifies payload + control + execution smoke on a DIFFERENT
+  machine; that loop caught all three packaging bugs above.
 - **Reproducible, execution-verified desktop artifacts**: both
   packaging scripts are now self-contained - they scaffold the
   whole payload tree from any fresh checkout (the deb's control
