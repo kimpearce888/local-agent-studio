@@ -106,6 +106,21 @@ not follow-ups.
   rules are now: parent must exist, and the parent CHAIN must be
   acyclic (walked with a seen-set, self-parent included) and
   shallower than 64 levels as a sanity guard.
+- **Real-server capability tests + real-model benchmark wiring**:
+  `python -m bench --provider <preset> --model <id>` runs the
+  capability probe against a LIVE OpenAI-compatible server first
+  (its findings drive the planner configuration, like the app's
+  setup flow), then the corpus and kill/resume cycles with no
+  scripted replies.  run_worker_real decomposes the run phase
+  (scripted valid plan + live worker) after measurement showed
+  every local model (qwen2.5 0.5b/1.5b/3b) fails the planner phase
+  after all repair rounds.  Verified here against user-mode ollama:
+  streaming/tool-calling/json-schema all genuinely TRUE, token
+  counting honestly FALSE.
+- **Rootless install verification**: dpkg --root unpack+registration
+  with versioned-Depends enforcement, the dpkg-installed binary
+  passing the Xvfb GUI smoke, desktop-file-validate on the installed
+  entry, and the AppImage launching via --appimage-extract-and-run.
 - **CI-produced, download-back-verified desktop artifacts**: the
   new `artifacts` CI job builds, verifies and uploads the .deb and
   AppImage on every push (ubuntu-22.04, glibc 2.35 floor - pinned

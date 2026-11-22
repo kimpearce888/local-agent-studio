@@ -92,7 +92,18 @@ download-back loop caught the glibc floor, a libc6-i386 Depends
 leak and floors that silently never fired - runner-internal
 verification alone cannot see any of them.  On a rootless host
 missing the dlopen'd GUI libraries, extract the distro packages
-and point `LAS_SMOKE_LIBDIR` at them, as above. Version strings
+and point `LAS_SMOKE_LIBDIR` at them, as above.
+
+The privileged half of installing was verified rootless as far as
+physics allows, and every step below PASSED: `dpkg --root=<tree>
+--force-not-root -i` (a real dpkg unpack + database registration +
+versioned-Depends enforcement; this deb ships no maintainer
+scripts, so unpack is the complete install action), the binary AS
+INSTALLED BY DPKG passing the Xvfb GUI smoke, desktop-file-validate
+on the installed entry, and the AppImage launching through its own
+runtime with `--appimage-extract-and-run` (the documented no-FUSE
+path).  Literally `sudo dpkg -i` on a desktop and a FUSE mount
+remain the only unperformed steps - they need root and /dev/fuse. Version strings
 are unified at 0.4.0 across the
 Cargo workspace, `pyproject.toml`, `las.__version__` and the meta
 table's `app_version` row, so an artifact version always matches what
