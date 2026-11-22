@@ -225,7 +225,7 @@ def main() -> int:
     # appimagetool (this sandbox lacks appstreamcli; CI has it).
     if shutil.which("appstreamcli"):
         r = subprocess.run(
-            ["appstreamcli", "validate", "--no-network",
+            ["appstreamcli", "validate",
              str(metainfo / "local-agent-studio.appdata.xml")],
             capture_output=True, text=True)
         if r.returncode != 0:
