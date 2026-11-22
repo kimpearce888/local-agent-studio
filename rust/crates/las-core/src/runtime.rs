@@ -32,11 +32,13 @@ pub fn production_responder(
     store: Arc<CoreStore>,
     scheduler: Arc<crate::scheduler::InferenceScheduler>,
     adapters: Arc<crate::providers::AdapterRegistry>,
+    mcp: crate::mcp::McpClients,
 ) -> AsyncResponder {
     Arc::new(move |entry: &InboxRow| {
         let store = store.clone();
         let scheduler = scheduler.clone();
         let adapters = adapters.clone();
+        let mcp = mcp.clone();
         let recipient = entry.recipient.clone();
         let payload = entry.payload_json.clone();
         Box::pin(async move {
@@ -95,8 +97,24 @@ pub fn production_responder(
                 &recipient, &provider, &model).ok().flatten();
             let (budget, _basis) =
                 crate::context::calibrate(raw_budget, last);
+            // Mandate 13.2: the agent's granted MCP tools and
+            // their schemas enter the turn's system context (the
+            // note is empty when no server is granted).
+            let grants = crate::tools::parse_grants(
+                &agent.profile.tool_grants_json);
+            let catalog = mcp.tool_catalog(
+                &recipient, &grants);
+            let system = {
+                let note = crate::mcp::mcp_tools_note(&catalog);
+                if note.is_empty() {
+                    agent.profile.system_prompt.clone()
+                } else {
+                    format!("{}\n\n{}",
+                            agent.profile.system_prompt, note)
+                }
+            };
             let messages = crate::context::assemble_context(
-                &agent.profile.system_prompt, &memories,
+                &system, &memories,
                 &transcript, &prompt, budget);
             let pre_call_estimate: i64 = messages.iter()
                 .map(|m| crate::context::estimate_tokens(&m.content)
@@ -883,6 +901,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_tool_schemas_enter_the_model_context() {
+        // Mandate 13.2 end to end: an agent with a granted+enabled
+        // MCP server gets the server's tool schemas in its system
+        // context.  The local HTTP endpoint CAPTURES the request
+        // body, so the assertion is about what the model would
+        // really see.
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+
+        let capture = std::env::temp_dir().join(format!(
+            "las-mcp-note-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&capture);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let cap = capture.clone();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = vec![0u8; 1 << 20];
+                let mut n = 0;
+                // Read the whole request (body follows headers).
+                loop {
+                    match stream.peek(&mut buf[..0]) {
+                        _ => {}
+                    }
+                    match stream.read(&mut buf[n..]) {
+                        Ok(0) | Err(_) => break,
+                        Ok(k) => {
+                            n += k;
+                            if let Some(pos) = find_body_end(
+                                &buf[..n]) {
+                                n = pos;
+                                break;
+                            }
+                        }
+                    }
+                }
+                let body = String::from_utf8_lossy(
+                    &buf[..n]).into_owned();
+                let _ = std::fs::write(&cap, body);
+                let out = br#"{"choices":[{"message":{
+                    "content":"noted"}}],
+                    "usage":{"prompt_tokens":50,
+                    "completion_tokens":2}}"#;
+                let _ = stream.write_all(format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: \
+                     application/json\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n",
+                    out.len()).as_bytes());
+                let _ = stream.write_all(out);
+            }
+        });
+        fn find_body_end(req: &[u8]) -> Option<usize> {
+            let s = String::from_utf8_lossy(req);
+            let idx = s.find("\r\n\r\n")?;
+            let headers = &s[..idx];
+            let len: usize = headers.lines()
+                .find_map(|l| {
+                    let (k, v) = l.split_once(':')?;
+                    (k.trim().eq_ignore_ascii_case(
+                        "content-length"))
+                        .then(|| v.trim().parse().ok())?
+                })?;
+            Some(idx + 4 + len)
+        }
+
+        let store = Arc::new(CoreStore::in_memory().unwrap());
+        store.create_agent("u", "u", "", &ProfileSpec {
+            system_prompt: "You are u.".into(),
+            model_provider: "localmock".into(),
+            model_id: "m".into(),
+            params: serde_json::Value::Null,
+            tool_grants: vec!["mcp:docs".to_string()],
+        }).unwrap();
+        let clients = crate::mcp::McpClients::new(store.clone());
+        clients.upsert(&crate::mcp::McpServerConfig {
+            id: "docs".into(),
+            command: "python3".into(),
+            url: None,
+            args: vec![
+                "tests/fixtures/mcp_echo_server.py".into()],
+            env: Default::default(),
+            allow_tools: vec!["*".into()],
+        }).unwrap();
+        clients.set_enabled("docs", true).unwrap();
+
+        let mut adapters =
+            crate::providers::AdapterRegistry::new();
+        adapters.register("localmock",
+            crate::providers::OpenAiCompatAdapter::new(
+                &format!("http://{addr}"), None).unwrap());
+        let scheduler = Arc::new(
+            crate::scheduler::InferenceScheduler::new(4, 2));
+        let responder = production_responder(
+            store.clone(), scheduler, Arc::new(adapters),
+            clients);
+        let rt = AgentRuntime::new(store.clone(), responder);
+        let entry = store.send_message(
+            "user", "u", "what tools do you have?", "",
+            BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+
+        let body = std::fs::read_to_string(&capture)
+            .expect("the request body was captured");
+        let parsed: serde_json::Value =
+            serde_json::from_str(
+                &body[body.find('{').unwrap_or(0)..])
+            .expect("valid JSON body");
+        let system = parsed["messages"][0]["content"]
+            .as_str().unwrap_or_default();
+        assert!(system.starts_with("You are u."),
+                "the agent's own prompt leads: {system}");
+        assert!(system.contains("MCP tools available this turn"),
+                "{system}");
+        assert!(system.contains("mcp:docs:echo"), "{system}");
+        assert!(system.contains("UNTRUSTED"), "{system}");
+        assert!(system.contains("TOOL_CALL"), "{system}");
+        // And the reply made it back through the loop.
+        let t = store.transcript("u-s-main").unwrap();
+        assert!(t.iter().any(|m| m.content.contains("noted")));
+        rt.shutdown();
+        let _ = std::fs::remove_file(&capture);
+    }
+
+    #[tokio::test]
     async fn provider_usage_is_recorded_with_our_estimate() {
         // Mandate 9.3 end to end: the production responder calls a
         // real (local) HTTP endpoint, and the provider's EXACT
@@ -924,7 +1066,8 @@ mod tests {
         let scheduler = Arc::new(
             crate::scheduler::InferenceScheduler::new(4, 2));
         let responder = production_responder(
-            store.clone(), scheduler, Arc::new(adapters));
+            store.clone(), scheduler, Arc::new(adapters),
+            crate::mcp::McpClients::new(store.clone()));
         let rt = AgentRuntime::new(store.clone(), responder);
         let entry = store.send_message(
             "user", "u", "count me", "", BusyMode::Wait).unwrap();

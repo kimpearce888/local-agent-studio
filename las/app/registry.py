@@ -1,7 +1,9 @@
 """Module registry: discovery, validation, capability resolution (ADR-0002).
 
 Discovery is a ``pkgutil`` scan for ``manifest.py`` files under
-``las/modules/`` (one level of registered children below parents). Python
+``las/modules/`` at ANY nesting depth (audit item 14: trees may nest
+recursively; the parent chain must simply terminate - cycles are
+rejected). Python
 needs no generated references, so no central index exists and none is
 allowed: the registry test keeps manifests, directories and this module in
 sync. Enable/disable resolution happens at process start (no hot-unload in
@@ -54,25 +56,23 @@ def _load_manifest(dotted: str) -> Optional[ModuleManifest]:
 
 
 def discover() -> list[ModuleManifest]:
-    """Scan ``las/modules/*/manifest.py`` and ``las/modules/*/*/manifest.py``."""
+    """Scan ``las/modules/**/manifest.py`` at any nesting depth."""
     manifests: list[ModuleManifest] = []
     package = importlib.import_module(MODULES_PACKAGE)
-    for parent_info in sorted(pkgutil.iter_modules(package.__path__),
-                              key=lambda i: i.name):
-        if not parent_info.ispkg:
-            continue
-        manifest = _load_manifest(f"{MODULES_PACKAGE}.{parent_info.name}.manifest")
-        if manifest is not None:
-            manifests.append(manifest)
-        parent_pkg = importlib.import_module(f"{MODULES_PACKAGE}.{parent_info.name}")
-        for child_info in sorted(pkgutil.iter_modules(parent_pkg.__path__),
-                                 key=lambda i: i.name):
-            if not child_info.ispkg:
+
+    def walk(path, prefix: str) -> None:
+        for info in sorted(pkgutil.iter_modules(path),
+                           key=lambda i: i.name):
+            if not info.ispkg:
                 continue
-            manifest = _load_manifest(
-                f"{MODULES_PACKAGE}.{parent_info.name}.{child_info.name}.manifest")
+            dotted = f"{prefix}.{info.name}"
+            manifest = _load_manifest(f"{dotted}.manifest")
             if manifest is not None:
                 manifests.append(manifest)
+            sub = importlib.import_module(dotted)
+            walk(sub.__path__, dotted)
+
+    walk(package.__path__, MODULES_PACKAGE)
     return manifests
 
 
@@ -99,10 +99,23 @@ class ModuleRegistry:
                     raise RegistryError(
                         f"Module {m.id!r} declares parent {m.parent!r}, "
                         f"which has no manifest.")
-                if parent.parent is not None:
-                    raise RegistryError(
-                        f"Module {m.id!r} nests deeper than one level; "
-                        f"{m.parent!r} is itself a child module.")
+                # Nested trees are fine (audit item 14); the parent
+                # chain must terminate.  Walk it with a seen-set so
+                # cycles are rejected instead of looping forever.
+                seen = {m.id}
+                up: Optional[str] = parent.parent
+                steps = 0
+                while up is not None:
+                    if up in seen:
+                        raise RegistryError(
+                            f"Module {m.id!r} sits in a parent cycle at {up!r}.")
+                    seen.add(up)
+                    up = self.manifests[up].parent
+                    steps += 1
+                    if steps > 64:
+                        raise RegistryError(
+                            f"Module {m.id!r} nests deeper than 64 levels; "
+                            f"this is almost certainly a configuration error.")
             for dep in m.requires:
                 if dep not in self.manifests:
                     raise RegistryError(

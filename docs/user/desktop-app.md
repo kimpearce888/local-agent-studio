@@ -208,7 +208,13 @@ under grants `mcp:<server>` (the whole server) or
 the built-in tools, subject to the server's own fail-closed
 `allow_tools` list.  Tool results are always labelled UNTRUSTED
 content with the origin server named, and connections, restarts and
-calls are audited like every other tool decision.  A server is configured
+calls are audited like every other tool decision.  The tools your
+agent is granted - and their input schemas, with the exact call
+format - are injected into its system context each turn, so the
+model can discover them without trial and error; schemas are
+marked UNTRUSTED data and capped (20 tools per turn, 400 characters
+of schema each), and a tool the agent is not granted never enters
+its context.  A server is configured
 with a command line and an id (stdio: a local child process) or
 with a URL (Streamable HTTP: a remote endpoint - the session
 header is captured at initialize and sent on every request, and

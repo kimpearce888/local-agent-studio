@@ -46,8 +46,8 @@ Independent persistent multi-agent desktop environment, Rust-first:
 | 10 | Shell tool without OS sandbox | OPEN | subprocess execution remains flagged; Rust `security` module will enforce Landlock (kernel 5.10 present) + argument arrays; until then run_command stays deny-by-default |
 | 11 | Empty allowlist = unrestricted | **FIXED** | `tools.py` denies with `command-allowlist-empty` when shell is enabled but the allowlist is empty (fail closed); tests `TestItem11` |
 | 12 | Web fetch SSRF/IP/redirect hardening | **FIXED** | `tools.rs` hardened fetch: domain allowlist + resolved-IP checks (private/loopback/link-local/ULA/IPv4-mapped refused, SSRF), manual redirects re-validated per hop (max 3), text-only MIME gate, 1 MB / 10 s caps; tests include a real local HTTP server covering loopback refusal, same-host redirect follow, cross-host redirect refusal and binary refusal |
-| 13 | Credentials as plaintext | LARGELY ADDRESSED | keys are `env:NAME` references, never values; serializer audit pending in Rust port |
-| 14 | Registry one-level nesting limit | OPEN | `registry.py:104` rejects deeper descendants; the Rust module tree designs recursive nesting from the start; Python registry fix deferred to the port (no user impact today) |
+| 13 | Credentials as plaintext | ADDRESSED | keys are `env:NAME` references, never values; serializer audit CLOSED: error paths never echo the key, DB/API/JSON carry the env NAME only (test-proven) |
+| 14 | Registry one-level nesting limit | ADDRESSED | `registry.py` now nests recursively (discovery walks the whole tree) with parent-chain cycle detection and a 64-level sanity guard |
 | 15 | Attempt state/retry termination | FIXED (prior) | attempt state machine; 1000/1000 kill-resume benchmark |
 | 16 | Pause/resume/cancel lifecycle | FIXED (prior) | same benchmark + run view tests |
 | 17 | API coordinator keeps control access | FIXED (prior) | `las/modules/api/__init__.py` holds the live driver for paused/gate runs; `tests/test_api.py` |
@@ -477,20 +477,45 @@ Test totals: Rust 135 green (109 las-core lib, 6 acceptance, 20
 kittest UI), workspace `--locked`; release build green.  Python
 side untouched this session (315 at 9cb4134).
 
+## Session: audit residuals 13/14 + MCP tool-schema injection (after 65952fb)
+
+- **Credentials serializer audit closed (#13)**: two test-proven
+  invariants - (a) ProviderError strings from network failures and
+  HTTP 401s never contain the key (URLs/statuses only; the adapter
+  has no Debug/Serialize impls by design), (b) the endpoints table
+  persists the env var NAME; a raw byte scan of the database file
+  plus the API rows plus their JSON serialization all show the name
+  only.
+- **Python registry recursive nesting (#14)**: the one-level limit
+  is gone - discovery walks `las/modules/**` at any depth, structure
+  validation now requires the parent CHAIN to be acyclic (seen-set
+  walk, self-parent rejected, 64-level sanity guard).  Tests: deep
+  nesting accepted, parent-cycle rejected, self-parent rejected;
+  registry suite 20/20, lifecycle + CLI green.
+- **Dynamic MCP tool schemas in the model context (13.2 remainder)**:
+  `McpClients::tool_catalog` filters by enablement + server
+  allowlist + agent grants (exact `mcp:<server>:<tool>` grants list
+  only that tool), `mcp_tools_note` formats the note (exact
+  TOOL_CALL format, UNTRUSTED label, 20-tool / 400-char caps), and
+  `production_responder` appends it to the system prompt when the
+  catalog is non-empty.  E2E: the request body captured at the
+  provider shows the note in messages[0], the agent's own prompt
+  still leading.
+
+Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
+kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
+
 ## Exact next engineering action
 
-None blocking - the P0 scope AND the recorded implementable P1
-list are built, tested and packaged: session rollover (9.4), the
-MCP client (stdio + Streamable HTTP, 13.2 core), Landlock
-run_command (13.4, audit item 10), versioned artifacts (10) and
-provider-exact token accounting (9.3) are all in as of this
-session.  What remains is genuinely blocked or deliberately
-deferred: the environment-blocked verifications (real-server
-capability tests and real-model benchmark, audit items 19/20 -
-harnesses shipped, need a model server; installing the .deb/
-AppImage needs root/FUSE on a target machine), dynamic MCP
-tool-schema injection into model turns (an enhancement on top of
-the callable-by-name tools), a tokenizer dependency if one is ever
-wanted beyond provider-exact counts, and the deferred audit
-residuals (Python registry recursion #14, Rust credentials
-serializer audit #13 residual).
+None blocking - the P0 scope, the recorded implementable P1 list
+AND the former audit residuals are all built, tested and packaged:
+session rollover (9.4), the full MCP client (stdio + Streamable
+HTTP + dynamic tool schemas in the model context, 13.2), Landlock
+run_command (13.4, audit item 10), versioned artifacts (10),
+provider-exact token accounting (9.3), and audit items 13/14.  The
+ONLY remaining items are the environment-blocked verifications:
+real-server capability tests and the real-model benchmark (audit
+items 19/20 - harnesses shipped, they need a model server to point
+at), and installing the .deb/AppImage on a target machine (needs
+root/FUSE).  A tokenizer dependency would only ever be wanted
+beyond the provider-exact counting already in place.

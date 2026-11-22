@@ -66,7 +66,8 @@ impl RuntimeHandle {
                 store.clone(),
                 production_responder(
                     store.clone(), scheduler,
-                    Arc::new(adapters)));
+                    Arc::new(adapters),
+                    las_core::mcp::McpClients::new(store.clone())));
             let tok = tokio::runtime::Builder::
                 new_current_thread().enable_all().build();
             let Ok(tok) = tok else {

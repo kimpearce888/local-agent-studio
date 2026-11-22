@@ -81,6 +81,31 @@ not follow-ups.
   exercises exactly that path; CI's 6.x kernels exercise the real
   confinement: in-jail writes succeed, escapes and outside reads
   are refused, timeouts kill the tree).
+- **Dynamic MCP tool schemas in the model context (mandate 13.2)**:
+  an agent's granted-and-enabled MCP servers now inject their tool
+  names, descriptions and input schemas into the turn's system
+  context, with the exact TOOL_CALL wire format and an UNTRUSTED
+  label (schemas describe inputs; they are never instructions).
+  The catalog applies all three filters before anything enters the
+  context: server enablement (unavailable servers surface as honest
+  per-server reasons), the server's own tool allowlist, and the
+  agent's grants (an exact `mcp:<server>:<tool>` grant lists only
+  that tool).  Capped at 20 tools / 400 chars of schema per tool;
+  empty when nothing is granted.  Verified end to end by capturing
+  the real request body sent to the provider.
+- **Credentials serializer audit closed (audit item 13)**: test-proven
+  that the resolved key never materializes anywhere - error paths
+  (network failures, HTTP 401) carry URLs and statuses, never the
+  Authorization value; the endpoints table, its API rows and their
+  JSON serialization carry the env var NAME only; a raw scan of the
+  database file finds no secret bytes.  The adapter struct
+  deliberately carries no Debug/Serialize impls.
+- **Python module registry: recursive nesting (audit item 14)**:
+  modules may nest at any depth under `las/modules/` (discovery
+  walks the whole tree); the one-level limit is gone.  Structure
+  rules are now: parent must exist, and the parent CHAIN must be
+  acyclic (walked with a seen-set, self-parent included) and
+  shallower than 64 levels as a sanity guard.
 - **Provider-exact token accounting (mandate 9.3)**: every model
   call's EXACT provider token counts (usage.prompt_tokens /
   completion_tokens) are persisted in `token_usage` next to the

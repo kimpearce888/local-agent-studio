@@ -1480,6 +1480,42 @@ fn endpoint_from_row(r: &Row) -> rusqlite::Result<EndpointRow> {
 mod tests {
     use super::*;
 
+    /// Audit item 13: the endpoints table persists the env var
+    /// NAME only - the resolved secret value never lands anywhere
+    /// in the database file, in any API output, or in JSON.
+    #[test]
+    fn endpoint_persists_env_name_never_the_secret() {
+        const NAME: &str = "LAS_SECRET_ENV_NAME_XYZ";
+        const SECRET: &str = "LAS-SECRET-sentinel-9917";
+        let dir = std::env::temp_dir().join(format!(
+            "las-cred-audit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = CoreStore::open(dir.join("t.db")).unwrap();
+        store.upsert_endpoint(&EndpointRow {
+            id: "local".into(), name: "Local".into(),
+            base_url: "http://127.0.0.1:1234".into(),
+            api_key_env: NAME.into(), note: String::new(),
+            created_at: utc_now(),
+        }).unwrap();
+        // The runtime resolves the value from the environment...
+        std::env::set_var(NAME, SECRET);
+        let rows = store.list_endpoints().unwrap();
+        assert_eq!(rows[0].api_key_env, NAME,
+                   "the API returns the NAME, not the value");
+        // ...but the whole DATABASE FILE never contains it.
+        let db_bytes = std::fs::read(dir.join("t.db")).unwrap();
+        assert!(!String::from_utf8_lossy(&db_bytes)
+                .contains(SECRET),
+                "the secret leaked into the database file");
+        // And JSON serialization of the row carries the name only.
+        let json = serde_json::to_string(&rows[0]).unwrap();
+        assert!(json.contains(NAME) && !json.contains(SECRET),
+                "{json}");
+        std::env::remove_var(NAME);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn endpoints_crud_and_rule_revocation() {
         let store = CoreStore::in_memory().unwrap();

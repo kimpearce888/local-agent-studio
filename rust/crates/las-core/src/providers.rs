@@ -63,6 +63,10 @@ pub struct ModelInfo {
 pub struct OpenAiCompatAdapter {
     http: ureq::Agent,
     base_url: String,
+    // The RESOLVED key lives only here, in memory, and this struct
+    // deliberately carries no Debug/Serialize/Display impl: no log
+    // line, error text or serializer may ever materialize it
+    // (audit item 13; enforced by the tests below).
     api_key: Option<String>,
 }
 
@@ -360,6 +364,54 @@ mod tests {
         let models = adapter.list_models().unwrap();
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].id, "qwen3-8b");
+    }
+
+    /// Audit item 13: no error path may echo the resolved key.
+    /// The adapter only ever puts it in the Authorization header;
+    /// errors carry URLs and statuses, never headers.
+    #[test]
+    fn credential_never_appears_in_any_error_path() {
+        const SECRET: &str = "LAS-SECRET-sentinel-8842";
+        // (a) network failure (closed port): the error names the
+        // URL, never the header value.
+        let broken = OpenAiCompatAdapter::new(
+            "http://127.0.0.1:1", Some(SECRET.into())).unwrap();
+        for text in [
+            broken.list_models().err().map(|e| e.to_string()),
+            broken.chat("m", &[
+                ChatMessage::new("user", "hi")],
+                &serde_json::json!({})).err()
+                .map(|e| e.to_string()),
+            broken.probe("m").err().map(|e| e.to_string()),
+        ].into_iter().flatten() {
+            assert!(!text.contains(SECRET),
+                    "error leaks the credential: {text}");
+        }
+        // (b) HTTP 401 from a real local endpoint: the status error
+        // shows the code, never the header value.
+        let listener = std::net::TcpListener::bind(
+            "127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read as _, Write as _};
+            if let Ok((mut s, _)) = listener.accept() {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf);
+                let body = b"{\"error\":{\"message\":\"bad key\"}}";
+                let _ = s.write_all(format!(
+                    "HTTP/1.1 401 Unauthorized\r\nContent-Type: \
+                     application/json\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n",
+                    body.len()).as_bytes());
+                let _ = s.write_all(body);
+            }
+        });
+        let denied = OpenAiCompatAdapter::new(
+            &format!("http://{addr}"), Some(SECRET.into())).unwrap();
+        let text = denied.list_models().err()
+            .map(|e| e.to_string()).unwrap_or_default();
+        assert!(text.contains("401"), "status surfaced: {text}");
+        assert!(!text.contains(SECRET), "leak: {text}");
     }
 
     #[test]

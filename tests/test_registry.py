@@ -17,19 +17,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _manifest_paths() -> set[str]:
-    """All manifest.py files under las/modules (parents + one child level)."""
+    """All manifest.py files under las/modules at any nesting depth."""
     root = os.path.join(REPO, "las", "modules")
     found = set()
-    for parent in sorted(os.listdir(root)):
-        pdir = os.path.join(root, parent)
-        if not os.path.isdir(pdir):
-            continue
-        if os.path.exists(os.path.join(pdir, "manifest.py")):
-            found.add(f"las/modules/{parent}")
-        for child in sorted(os.listdir(pdir)):
-            cdir = os.path.join(pdir, child)
-            if os.path.isdir(cdir) and os.path.exists(os.path.join(cdir, "manifest.py")):
-                found.add(f"las/modules/{parent}/{child}")
+    for dirpath, _dirnames, filenames in os.walk(root):
+        if "manifest.py" in filenames:
+            found.add(os.path.relpath(dirpath, REPO)
+                      .replace(os.sep, "/"))
     return found
 
 
@@ -122,12 +116,26 @@ class TestValidation(unittest.TestCase):
         with self.assertRaises(RegistryError):
             ModuleRegistry([a, b])
 
-    def test_second_level_child_rejected(self):
-        parent = self._manifest(id="p")
-        child = self._manifest(id="c", parent="p")
-        grandchild = self._manifest(id="g", parent="c")
+    def test_deep_nesting_is_allowed(self):
+        # Audit item 14: trees nest recursively; only cycles (and
+        # missing parents) are structural errors.
+        p = self._manifest(id="p")
+        c = self._manifest(id="c", parent="p")
+        g = self._manifest(id="g", parent="c")
+        gg = self._manifest(id="gg", parent="g")
+        registry = ModuleRegistry([p, c, g, gg])
+        self.assertEqual(sorted(registry.ids()),
+                         ["c", "g", "gg", "p"])
+
+    def test_parent_cycle_rejected(self):
+        a = self._manifest(id="a", parent="b")
+        b = self._manifest(id="b", parent="a")
         with self.assertRaises(RegistryError):
-            ModuleRegistry([parent, child, grandchild])
+            ModuleRegistry([a, b])
+
+    def test_self_parent_rejected(self):
+        with self.assertRaises(RegistryError):
+            ModuleRegistry([self._manifest(id="solo", parent="solo")])
 
     def test_missing_contract_rejected(self):
         with self.assertRaises(RegistryError):

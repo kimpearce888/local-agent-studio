@@ -65,15 +65,17 @@ reference and migration source, kept runnable for parity tests.
   writes, rlimits, process-tree timeout kill, command allowlist,
   FAILS CLOSED on kernels without Landlock - this sandbox's 5.10
   kernel tests that path, CI's 6.x kernels test the confinement).
-  MCP stdio AND Streamable HTTP transports are IN (approval before
-  connection, allowlists, grants, audit, untrusted labelling);
-  dynamic MCP tool-schema injection into model turns is not.
+  MCP stdio AND Streamable HTTP transports are IN, AND the granted
+  tools' schemas are injected into the model's system context each
+  turn (enablement x server allowlist x agent grants, UNTRUSTED
+  labelled, capped).
   Versioned artifacts are IN (registry + export + Artifacts screen).
   Provider-exact token accounting is IN (token_usage +
-  context::calibrate).  Still open: the environment-blocked
-  verifications (audit items 19/20, install-testing) and the
-  deferred Python registry recursion (#14) and Rust credentials
-  serializer audit residual (#13).  Context rollover is IN (session segments,
+  context::calibrate).  Audit residuals #13 (credentials serializer audit,
+  test-proven) and #14 (Python registry recursive nesting with
+  parent-chain cycle detection) are CLOSED.  Still open: ONLY the
+  environment-blocked verifications (audit items 19/20,
+  install-testing).  Context rollover is IN (session segments,
   continuity summaries, restore); a model-generated summary layer
   would ride the provider adapters when a server is configured.
 - Real-server capability tests and real-model benchmark (items 19,
