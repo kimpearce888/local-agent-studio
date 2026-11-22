@@ -539,6 +539,12 @@ Artifacts: dist/local-agent-studio_0.4.0_amd64.deb (8.6 MB),
 dist/local-agent-studio-0.4.0-x86_64.AppImage (12 MB).  Test
 totals: Rust 141 green, Python 317 passed / 22 skipped.
 
+Post-push follow-up: CI caught the MCP-schema e2e test being
+packet-split flaky (the request-capture thread could cut the body
+before the last TCP segment arrived).  Rewritten in the providers.rs
+mock pattern (line-oriented headers + exact Content-Length body
+read); 10 consecutive runs green, workspace 141 green.
+
 ## Exact next engineering action
 
 None blocking - the P0 scope, the recorded implementable P1 list

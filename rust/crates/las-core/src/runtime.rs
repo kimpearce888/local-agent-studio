@@ -916,29 +916,37 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let cap = capture.clone();
         std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = vec![0u8; 1 << 20];
-                let mut n = 0;
-                // Read the whole request (body follows headers).
-                loop {
-                    match stream.peek(&mut buf[..0]) {
-                        _ => {}
-                    }
-                    match stream.read(&mut buf[n..]) {
-                        Ok(0) | Err(_) => break,
-                        Ok(k) => {
-                            n += k;
-                            if let Some(pos) = find_body_end(
-                                &buf[..n]) {
-                                n = pos;
-                                break;
-                            }
+            use std::io::{BufRead as _, BufReader, Write as _};
+            if let Ok((stream, _)) = listener.accept() {
+                // Line-oriented header reads + an exact body read
+                // (the providers.rs mock pattern): robust against
+                // the request arriving in several TCP segments.
+                let mut reader =
+                    BufReader::new(stream.try_clone().unwrap());
+                let mut body = String::new();
+                let mut content_length = 0usize;
+                let mut first = String::new();
+                if reader.read_line(&mut first).is_ok() {
+                    loop {
+                        let mut h = String::new();
+                        if reader.read_line(&mut h)
+                            .unwrap_or(0) == 0
+                            || h.trim().is_empty() { break; }
+                        let lower = h.to_lowercase();
+                        if let Some(v) = lower.strip_prefix(
+                            "content-length:") {
+                            content_length =
+                                v.trim().parse().unwrap_or(0);
                         }
                     }
+                    let mut buf = vec![0u8; content_length];
+                    if reader.read_exact(&mut buf).is_ok() {
+                        body = String::from_utf8_lossy(
+                            &buf).into_owned();
+                    }
                 }
-                let body = String::from_utf8_lossy(
-                    &buf[..n]).into_owned();
                 let _ = std::fs::write(&cap, body);
+                let mut stream = stream;
                 let out = br#"{"choices":[{"message":{
                     "content":"noted"}}],
                     "usage":{"prompt_tokens":50,
@@ -951,19 +959,6 @@ mod tests {
                 let _ = stream.write_all(out);
             }
         });
-        fn find_body_end(req: &[u8]) -> Option<usize> {
-            let s = String::from_utf8_lossy(req);
-            let idx = s.find("\r\n\r\n")?;
-            let headers = &s[..idx];
-            let len: usize = headers.lines()
-                .find_map(|l| {
-                    let (k, v) = l.split_once(':')?;
-                    (k.trim().eq_ignore_ascii_case(
-                        "content-length"))
-                        .then(|| v.trim().parse().ok())?
-                })?;
-            Some(idx + 4 + len)
-        }
 
         let store = Arc::new(CoreStore::in_memory().unwrap());
         store.create_agent("u", "u", "", &ProfileSpec {
@@ -1004,8 +999,7 @@ mod tests {
         let body = std::fs::read_to_string(&capture)
             .expect("the request body was captured");
         let parsed: serde_json::Value =
-            serde_json::from_str(
-                &body[body.find('{').unwrap_or(0)..])
+            serde_json::from_str(&body)
             .expect("valid JSON body");
         let system = parsed["messages"][0]["content"]
             .as_str().unwrap_or_default();
