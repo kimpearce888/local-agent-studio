@@ -1,0 +1,23 @@
+{
+  "provider": {
+    "id": "zai",
+    "model": "glm-4-plus",
+    "note": "PARTIAL sample - session budget ended the run before the corpus/kills finished; per-goal outcomes recovered from the event store"
+  },
+  "recovered_at": "2026-11-22T21:50:11.201246+00:00",
+  "measured_goals": 1,
+  "outcomes": {
+    "completed_without_help": 0,
+    "blocked_honest": 0,
+    "failed": 1
+  },
+  "per_run": [
+    {
+      "run": "run-20261122-212600-263c613c3281",
+      "outcome": "failed"
+    }
+  ],
+  "harness_log_tail": [
+    "goal 1/10 [gated] failed (1324s)"
+  ]
+}

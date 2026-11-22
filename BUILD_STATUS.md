@@ -555,9 +555,20 @@ COMPLETED WITHOUT HELP - the first real-model completion of the
 product's core loop (plan valid first attempt, real file reads,
 deliverables written, valid handoffs across a multi-task chain) -
 plus an honest blocked market-brief, 0 failures, 0 plan repairs.
-335 tests, engine gates green.  The v0.4.5 reference benchmark
-(10 goals + 2 kills) was launched at session end; see
-bench/results/ for the numbers.
+335 tests, engine gates green.
+
+The v0.4.5 reference benchmark (10 goals + 2 kills) was launched at
+session end and the session budget ended it early: goal 1 (gated
+market-brief, the hardest family) ran 22 minutes of real multi-task
+work (t1/t2 succeeded with genuine file reads and writes) and died
+t3 TIMEOUT - the per-task wall-time default (wall_task_seconds) was
+tuned for mock-speed runs and is now too small for real multi-turn
+file work.  That is the NEXT measured fix: raise the real-run task
+wall budget (and let long tasks complete instead of dying at a
+default), then rerun the full corpus.  Partial outcomes recovered to
+bench/results/bench-real-v045-partial.json (1 goal measured: failed
+TIMEOUT, 0 contract violations - the failure class has moved from
+handoff/protocol violations to honest capacity limits).
 
 ## Session: v0.4.4 - the honest blocker + benchmark input provisioning
 
