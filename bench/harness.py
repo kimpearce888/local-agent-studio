@@ -112,6 +112,75 @@ def _driver(engine: Engine, run_id: str, adapter, config=None):
 
 # -- real-provider corpus ----------------------------------------------------
 
+def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
+                    model: str, kills: int = 0) -> dict:
+    """The RUN phase against a LIVE model with a known-good plan.
+
+    Weak local models cannot produce valid plans (measured - see
+    run_corpus_real), which starves the run/kill metrics.  This
+    decomposition hands the worker a SCRIPTED valid plan (the same
+    plan_reply the mock corpus uses) and measures what the live model
+    does with the tasks: handoff validity, repairs, task outcomes,
+    and - with ``kills`` - resume-after-abandon through the live
+    provider.  Planner capability and worker capability are then
+    separate, honest numbers.  Pass NON-GATED goals: a gate pause is
+    a human decision, not a model result."""
+    from bench.goals import build_corpus as _bc  # noqa: F401  (doc ref)
+    rng = random.Random(20261121)
+    metrics = {"goals": len(goals), "tasks_total": 0, "tasks_ok": 0,
+               "tasks_failed": 0, "runs_succeeded": 0,
+               "handoff_repairs": 0, "kill_cycles": kills,
+               "kills_resumed_ok": 0}
+    for goal in goals:
+        plan = Planner(_mock(planner_script(goal)),
+                       "mock-model").plan(goal.text).plan
+        engine = Engine(data_dir)
+        run_id = engine.create_run(plan)
+        registry = ProviderRegistry()
+        registry.register(provider_id, adapter)
+        driver = engine.driver(run_id, registry,
+                               {"default": (provider_id, model)},
+                               DriverConfig(failure_policy="stop"))
+        if kills:
+            steps = rng.randint(1, max(1, len(plan.tasks) - 1))
+            for _ in range(steps):
+                driver.step()
+            # abandon (the "kill"), then resume through the live model
+            metrics["tasks_total"] += len(plan.tasks)
+            engine.driver(run_id, registry,
+                          {"default": (provider_id, model)},
+                          DriverConfig(
+                              failure_policy="stop")).run()
+            state = engine.state(run_id)
+            if state.status == "succeeded":
+                metrics["runs_succeeded"] += 1
+                metrics["kills_resumed_ok"] += 1
+            events = engine.store.events(run_id)
+            metrics["handoff_repairs"] += sum(
+                1 for e in events
+                if e.type == "task.attempt_failed")
+            for e in events:
+                if e.type == "task.succeeded":
+                    metrics["tasks_ok"] += 1
+                elif e.type == "task.failed":
+                    metrics["tasks_failed"] += 1
+            continue
+        driver.run()
+        metrics["tasks_total"] += len(plan.tasks)
+        state = engine.state(run_id)
+        if state.status == "succeeded":
+            metrics["runs_succeeded"] += 1
+        events = engine.store.events(run_id)
+        metrics["handoff_repairs"] += sum(
+            1 for e in events if e.type == "task.attempt_failed")
+        for e in events:
+            if e.type == "task.succeeded":
+                metrics["tasks_ok"] += 1
+            elif e.type == "task.failed":
+                metrics["tasks_failed"] += 1
+    return metrics
+
+
 def real_adapter(preset: str, base_url: str, timeout: float = 300.0):
     """A live OpenAI-compatible adapter for ``--provider`` runs.  The
     preset string resolves through PRESETS (ollama/lmstudio/...), so
