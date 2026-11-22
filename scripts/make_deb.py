@@ -137,7 +137,7 @@ def scaffold(version: str, depends: str) -> None:
     # Desktop entry + icon.
     apps = DEB_TREE / "usr" / "share" / "applications"
     apps.mkdir(parents=True)
-    (apps / "local-agent-studio.desktop").write_text(
+    (apps / "io.github.kimpearce888.local-agent-studio.desktop").write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=Local Agent Studio\n"
@@ -285,7 +285,7 @@ def main() -> int:
             print("FAIL: unpacked binary checksum mismatch")
             return 1
         entry = (Path(td) / "usr" / "share" / "applications"
-                 / "local-agent-studio.desktop")
+                 / "io.github.kimpearce888.local-agent-studio.desktop")
         if not entry.exists():
             print("FAIL: desktop entry missing from the payload")
             return 1

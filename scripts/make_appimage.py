@@ -178,7 +178,7 @@ def main() -> int:
         'HERE="$(dirname "$(readlink -f "$0")")"\n'
         'exec "$HERE/usr/bin/las-desktop" "$@"\n')
     (APPDIR / "AppRun").chmod(0o755)
-    (APPDIR / "local-agent-studio.desktop").write_text(
+    (APPDIR / "io.github.kimpearce888.local-agent-studio.desktop").write_text(
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=Local Agent Studio\n"
@@ -203,7 +203,7 @@ def main() -> int:
     (metainfo / "local-agent-studio.appdata.xml").write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         '<component type="desktop-application">\n'
-        '  <id>local-agent-studio</id>\n'
+        '  <id>io.github.kimpearce888.local-agent-studio</id>\n'
         '  <name>Local Agent Studio</name>\n'
         '  <summary>Local-first desktop studio for AI agent '
         'teams</summary>\n'
@@ -211,7 +211,7 @@ def main() -> int:
         'building, running and supervising teams of AI agents: '
         'the engine, tools, MCP client and session store live '
         'on your machine.</p></description>\n'
-        '  <launchable type="desktop-id">local-agent-studio'
+        '  <launchable type="desktop-id">io.github.kimpearce888.local-agent-studio'
         '.desktop</launchable>\n'
         '  <url type="homepage">https://github.com/kimpearce888/'
         'local-agent-studio</url>\n'
@@ -228,7 +228,10 @@ def main() -> int:
             ["appstreamcli", "validate",
              str(metainfo / "local-agent-studio.appdata.xml")],
             capture_output=True, text=True)
-        if r.returncode != 0:
+        # appstreamcli versions disagree on whether warnings flip
+        # the exit status; appimagetool fails on ERRORS only, so
+        # the pre-check does the same.
+        if " E: " in (r.stdout + r.stderr):
             print("FAIL: appstreamcli rejected the metainfo:",
                   r.stdout, r.stderr)
             return 1
