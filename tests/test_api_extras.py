@@ -83,7 +83,9 @@ class TestCompletionHook(ApiExtrasBase):
             "runs.completion_hook",
             'echo "$LAS_RUN_ID $LAS_RUN_STATUS" > "$LAS_HOOK_OUT"')
         run_id = self.start_run()
-        for _ in range(200):           # wait for the run + hook
+        # 60s wall budget: throttled CI runners run slowly (see the
+        # deflake note in test_api.py).
+        for _ in range(int(60 / 0.05)):  # wait for the run + hook
             if os.path.exists(hook_out):
                 break
             time.sleep(0.05)
@@ -100,7 +102,7 @@ class TestCompletionHook(ApiExtrasBase):
         Store(self.data_dir).set_setting("runs.completion_hook",
                                          "exit 3")
         run_id = self.start_run()
-        for _ in range(200):
+        for _ in range(int(60 / 0.05)):
             if any(e.type == "run.hook.executed"
                    for e in Store(self.data_dir).events(run_id)):
                 break

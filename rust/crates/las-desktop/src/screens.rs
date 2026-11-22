@@ -734,3 +734,89 @@ pub fn tools_screen(ui: &mut egui::Ui, state: &mut AppState) {
          permission broker and the Rule of Two) is under \
          construction; nothing on this screen pretends otherwise.");
 }
+
+/// Projects & Workspaces (live area 10/14): projects group agents
+/// and give the group a shared identity; each member's workspace
+/// jail stays per-agent (mandate 10) - a project is an
+/// organizational entity, not a permission bypass.
+pub fn projects_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Projects");
+    let store = state.store.clone();
+
+    ui.label("A project groups agents for one effort. Membership \\
+              never widens a member's tool grants or communication \\
+              rules - it is organization, not permission.");
+    ui.add_space(6.0);
+
+    // Create form (stacked, not horizontal: the row must not push
+    // the button off narrow viewports).
+    egui::Grid::new("project-form").num_columns(2).show(ui, |ui| {
+        ui.label("New project name");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.project_name).hint_text("name"));
+        ui.end_row();
+        ui.label("Description");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.project_desc).hint_text("description"));
+        ui.end_row();
+    });
+    if ui.button("Create").clicked() {
+        let name = state.project_name.trim().to_string();
+        if !name.is_empty() {
+            let slug: String = name.to_lowercase().chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect();
+            let slug = slug.trim_matches('-').to_string();
+            if !slug.is_empty() {
+                let _ = store.create_project(
+                    &slug, &name, state.project_desc.trim());
+                state.project_name.clear();
+                state.project_desc.clear();
+            }
+        }
+    }
+    ui.add_space(8.0);
+
+    // Project list with member management.
+    let projects = store.list_projects().unwrap_or_default();
+    if projects.is_empty() {
+        ui.label("No projects yet.");
+        return;
+    }
+    for (id, name, desc, created) in &projects {
+        egui::CollapsingHeader::new(format!(
+            "{name}  ({id})")).default_open(true).show(ui, |ui| {
+            ui.label(format!(
+                "created {created} - {}", desc));
+            let members = store.project_members(id)
+                .unwrap_or_default();
+            ui.label(format!(
+                "members ({}): {}",
+                members.len(),
+                if members.is_empty() { "(none)".to_string() }
+                else { members.join(", ") }));
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(
+                    &mut state.project_agent_input)
+                    .hint_text("agent id"));
+                if ui.button("Add member").clicked() {
+                    let agent = state.project_agent_input
+                        .trim().to_string();
+                    if !agent.is_empty() {
+                        let _ = store.add_project_member(
+                            id, &agent);
+                        state.project_agent_input.clear();
+                    }
+                }
+            });
+            for m in &members {
+                ui.horizontal(|ui| {
+                    ui.label(format!("· {m}"));
+                    if ui.button(format!("remove {m}")).clicked() {
+                        let _ = store.remove_project_member(id, m);
+                    }
+                });
+            }
+        });
+    }
+}

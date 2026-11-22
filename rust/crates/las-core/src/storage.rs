@@ -14,6 +14,9 @@ use std::sync::Mutex;
 
 pub struct CoreStore {
     conn: Mutex<Connection>,
+    /// Backing file's directory; None for an in-memory store (no
+    /// workspace jail can exist there).
+    path: Option<std::path::PathBuf>,
 }
 
 const SCHEMA: &str = r#"
@@ -135,6 +138,26 @@ CREATE TABLE IF NOT EXISTS comm_rules (
     may_call INTEGER NOT NULL DEFAULT 1,
     may_delegate INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (src, dst)
+);
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_members (
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    agent_id TEXT NOT NULL,
+    added_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, agent_id)
+);
+CREATE TABLE IF NOT EXISTS tool_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    ts TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    detail_json TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS blackboard (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -277,12 +300,15 @@ impl CoreStore {
     /// Open (creating if needed) the agent-domain store. The file may
     /// be the Python engine's database: unknown tables are ignored.
     pub fn open(path: impl AsRef<Path>) -> rusqlite::Result<Self> {
+        let dir = path.as_ref().parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self { conn: Mutex::new(conn), path: Some(dir) })
     }
 
     /// Direct connection access for module layers built on the store.
@@ -293,7 +319,105 @@ impl CoreStore {
     pub fn in_memory() -> rusqlite::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self { conn: Mutex::new(conn), path: None })
+    }
+
+    /// The directory holding the database file (workspaces live
+    /// under it); None for an in-memory store.
+    pub fn data_dir(&self) -> Option<&std::path::Path> {
+        self.path.as_deref()
+    }
+
+    /// Create a project (id must be unique; ids are chosen by the
+    /// caller, e.g. a slug).
+    pub fn create_project(&self, id: &str, name: &str,
+                          description: &str)
+                          -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO projects (id, name, description, \
+             created_at) VALUES (?,?,?,?)",
+            rusqlite::params![id, name, description, utc_now()])?;
+        Ok(())
+    }
+
+    /// All projects, oldest first.
+    pub fn list_projects(&self)
+        -> rusqlite::Result<Vec<(String, String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, description, created_at FROM projects \
+             ORDER BY created_at")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Add an agent to a project (idempotent).
+    pub fn add_project_member(&self, project_id: &str,
+                              agent_id: &str)
+                              -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO project_members (project_id, \
+             agent_id, added_at) VALUES (?,?,?)",
+            rusqlite::params![project_id, agent_id, utc_now()])?;
+        Ok(())
+    }
+
+    /// Remove an agent from a project.
+    pub fn remove_project_member(&self, project_id: &str,
+                                 agent_id: &str)
+                                 -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM project_members WHERE project_id=? AND \
+             agent_id=?",
+            rusqlite::params![project_id, agent_id])?;
+        Ok(())
+    }
+
+    /// The member agent ids of one project.
+    pub fn project_members(&self, project_id: &str)
+                           -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT agent_id FROM project_members WHERE \
+             project_id=? ORDER BY added_at")?;
+        let rows = stmt.query_map(
+            rusqlite::params![project_id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Append one tool-broker decision (spec 5.9: every call is
+    /// audited as tool.called or tool.denied).
+    pub fn log_tool_event(&self, agent_id: &str, tool: &str,
+                          decision: &str, detail_json: &str)
+                          -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO tool_events (agent_id, ts, tool, decision, \
+             detail_json) VALUES (?,?,?,?,?)",
+            rusqlite::params![agent_id, utc_now(),
+                              tool, decision, detail_json])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// The audit trail for one agent, oldest first.
+    pub fn tool_events(&self, agent_id: &str)
+                       -> rusqlite::Result<Vec<(String, String, String,
+                                                 String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT ts, tool, decision, detail_json FROM tool_events \
+             WHERE agent_id=? ORDER BY id")?;
+        let rows = stmt.query_map(
+            rusqlite::params![agent_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // -- agents ---------------------------------------------------------

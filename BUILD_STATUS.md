@@ -273,6 +273,43 @@ Rust: 69 tests green (50 lib incl. 4 context + 2 routing, 6
 acceptance 19.1-19.8 scenarios in 3 files, 13 UI). Python: 335 OK
 (313 headless + GUI under Xvfb).
 
+## Tool engine + Projects screen (after b617c92)
+
+CI status: run 29 (b617c92) is GREEN on GitHub - the repair worked.
+Run 28 (5d8b0f0) failed only on a 10-second poll deadline being too
+tight for a throttled CI runner (test_api end-to-end still
+"running"); all four such polling loops now carry a 60-second wall
+budget (they still exit the moment the run is terminal).
+
+- **Tool execution engine** (`las-core/src/tools.rs`, spec 5.9 /
+  mandate 10): a permission broker with the spec's check order -
+  explicit allowlist first (nothing granted implicitly), argument
+  validity and the 5 MB write cap, workspace-jail containment
+  (component-level traversal refusal + canonicalized-parent check),
+  and per-turn call budget. Executors for read_file, write_file,
+  list_files (all jailed, listing capped at 1000 entries) and
+  web_fetch (domain allowlist from profile params, 1 MB / 10 s
+  caps). Rule-of-Two capability flags are computed from the grants
+  by code (A and C with web_fetch; B honestly false until a tool
+  can reach outside the jail). Every decision persists a
+  tool.called / tool.denied audit row (new tool_events table).
+- **Tool loop in the actor**: a reply carrying TOOL_CALL JSON lines
+  runs each call through the broker, appends the result to the
+  transcript as a role-"tool" message, and gives the model another
+  round (max 4 rounds / 8 calls per turn); denials are visible to
+  the model so it can adapt. Integration tests: a stateful responder
+  writes a real file through the loop and the audit row lands; an
+  ungranted call is denied, audited, and SEEN by the model.
+- **Projects screen** (live area 10/14): projects group agents
+  (projects + project_members tables); membership is organization,
+  never a permission bypass. Creating from the form is a real click
+  (the form was deliberately re-stacked - the first horizontal
+  layout pushed the Create button outside the test viewport, which
+  the UI test caught).
+
+Rust: 80 green (60 lib incl. 8 tools + 2 loop tests, 6 acceptance,
+14 UI). Python: 313 OK headless.
+
 ## Exact next engineering action
 
 Context assembly for real agent work: the responder currently sends

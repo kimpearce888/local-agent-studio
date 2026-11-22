@@ -120,6 +120,39 @@ struct Actor {
 }
 
 impl Actor {
+    /// The broker for this agent's turn: workspace jail under the
+    /// data dir, explicit grants from the persisted profile, web
+    /// domain allowlist from profile params.  An in-memory store
+    /// has no data dir, so file tools have no jail and are denied
+    /// honestly; web_fetch can still run with its allowlist.
+    fn tool_broker(&self, entry: &InboxRow)
+                   -> crate::tools::Broker {
+        let agent = self.store.agent(&self.agent_id)
+            .map(|a| a.profile).ok();
+        let grants: Vec<String> = agent.as_ref()
+            .and_then(|p| serde_json::from_str(&p.tool_grants_json)
+                      .ok())
+            .unwrap_or_default();
+        let params: serde_json::Value = agent.as_ref()
+            .and_then(|p| serde_json::from_str(&p.params_json).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let domains: Vec<String> = params.get("web_domains")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|d| d.as_str()
+                     .map(str::to_string)).collect())
+            .unwrap_or_default();
+        let jail = self.store.data_dir()
+            .map(|d| d.join("workspaces").join(&self.agent_id))
+            .unwrap_or_else(|| {
+                // In-memory store: a jail that cannot exist.
+                std::path::PathBuf::from(
+                    "/nonexistent-las-in-memory-store")
+            });
+        let _ = std::fs::create_dir_all(&jail);
+        crate::tools::Broker::new(jail, grants)
+            .with_web_domains(domains)
+    }
+
     fn lock_for(&self, session: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.turn_locks.lock().unwrap();
         locks.entry(session.into()).or_default().clone()
@@ -176,8 +209,73 @@ impl Actor {
         });
 
         // The model reply: scheduler + provider adapter in production,
-        // deterministic closures in tests.
-        let reply = (self.responder)(&entry).await;
+        // deterministic closures in tests.  A reply may carry
+        // TOOL_CALL lines (the provider-agnostic convention in
+        // tools.rs): each call goes through the permission broker,
+        // the result is appended to the transcript, and the model
+        // gets another round - bounded by MAX_TOOL_ROUNDS and
+        // MAX_TOOL_CALLS_PER_TURN (spec 5.9 rate limit).
+        let broker = self.tool_broker(&entry);
+        let mut reply = (self.responder)(&entry).await;
+        let mut calls_used = 0usize;
+        for _round in 0..crate::tools::MAX_TOOL_ROUNDS {
+            let calls = crate::tools::parse_tool_calls(&reply);
+            if calls.is_empty() {
+                break;   // a final answer, not a tool turn
+            }
+            // The assistant turn that asked for tools is part of
+            // the record.
+            let _ = self.store.append_message(&MessageRow {
+                session_id: session.clone(), seq: 0,
+                role: "assistant".into(), content: reply.clone(),
+                reasoning: String::new(), tool_json: String::new(),
+                model: String::new(), ts: utc_now(),
+            });
+            for call in &calls {
+                if calls_used
+                    >= crate::tools::MAX_TOOL_CALLS_PER_TURN {
+                    let _ = self.store.log_tool_event(
+                        &self.agent_id, &call.tool, "tool.denied",
+                        r#"{"reason":"per-turn call budget                            exhausted"}"#);
+                    let _ = self.store.append_message(&MessageRow {
+                        session_id: session.clone(), seq: 0,
+                        role: "tool".into(),
+                        content: format!(
+                            "tool {} -> error:\ndenied: per-turn \
+                             call budget exhausted", call.tool),
+                        reasoning: String::new(),
+                        tool_json: String::new(),
+                        model: String::new(), ts: utc_now(),
+                    });
+                    continue;
+                }
+                calls_used += 1;
+                let outcome = broker.execute(call);
+                let decision = if outcome.ok
+                    && !outcome.output.starts_with("denied:") {
+                    "tool.called"
+                } else {
+                    "tool.denied"
+                };
+                let detail = serde_json::json!({
+                    "tool": call.tool, "args": call.args,
+                    "ok": outcome.ok}).to_string();
+                let _ = self.store.log_tool_event(
+                    &self.agent_id, &call.tool, decision, &detail);
+                let _ = self.store.append_message(&MessageRow {
+                    session_id: session.clone(), seq: 0,
+                    role: "tool".into(),
+                    content: crate::tools::format_tool_result(
+                        call, &outcome),
+                    reasoning: String::new(),
+                    tool_json: String::new(),
+                    model: String::new(), ts: utc_now(),
+                });
+            }
+            // The next round sees the tool results through the
+            // transcript (the responder re-assembles context).
+            reply = (self.responder)(&entry).await;
+        }
         let _ = self.store.append_message(&MessageRow {
             session_id: session.clone(), seq: 0,   // SQL-allocated
             role: "assistant".into(), content: reply.clone(),
@@ -349,6 +447,99 @@ mod tests {
         let b_inbox = store.inbox_for("b").unwrap();
         assert_eq!(b_inbox.len(), 2,
                    "second round-trip routed again");
+        rt.shutdown();
+    }
+
+    #[tokio::test]
+    async fn tool_calls_execute_through_the_broker() {
+        // File-backed store: the workspace jail lives under its dir.
+        let dir = std::env::temp_dir().join(format!(
+            "las-toolloop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(
+            CoreStore::open(dir.join("t.db")).unwrap());
+        let mut spec = spec("w");
+        spec.tool_grants = vec!["write_file".into(),
+                                "read_file".into()];
+        store.create_agent("w", "w", "", &spec).unwrap();
+        // Stateful responder: the first turn asks for a tool, the
+        // second sees the tool result in the re-assembled context
+        // and gives the final answer.
+        let round = std::sync::atomic::AtomicUsize::new(0);
+        let responder: AsyncResponder = Arc::new(
+            move |_entry: &crate::storage::InboxRow| {
+                let n = round.fetch_add(
+                    1, std::sync::atomic::Ordering::SeqCst);
+                let text = if n == 0 {
+                    "I will write the plan.\nTOOL_CALL {\"tool\": \
+                     \"write_file\", \"args\": {\"path\": \
+                     \"plan.md\", \"content\": \"step 1\"}}"
+                        .to_string()
+                } else {
+                    "The plan is written.".to_string()
+                };
+                Box::pin(async move { text })
+            });
+        let rt = AgentRuntime::new(store.clone(), responder);
+        let entry = store.send_message(
+            "user", "w", "make a plan", "", BusyMode::Wait)
+            .unwrap();
+        rt.deliver(&entry).await.unwrap();
+        // Transcript: inbound, the tool-request turn, the tool
+        // result, then the final answer.
+        let t = store.transcript("w-s-main").unwrap();
+        let roles: Vec<&str> = t.iter()
+            .map(|m| m.role.as_str()).collect();
+        assert_eq!(roles,
+                   vec!["user", "assistant", "tool", "assistant"],
+                   "the tool round is part of the record");
+        // The file really exists inside the jail.
+        let ws = dir.join("workspaces").join("w");
+        assert_eq!(
+            std::fs::read_to_string(ws.join("plan.md")).unwrap(),
+            "step 1", "the write really executed");
+        // Audit: one authorized call.
+        let audit = store.tool_events("w").unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].1, "write_file");
+        assert_eq!(audit[0].2, "tool.called");
+        rt.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ungranted_tool_call_is_denied_and_audited() {
+        let store = store_with_agents();   // no grants at all
+        let round = std::sync::atomic::AtomicUsize::new(0);
+        let responder: AsyncResponder = Arc::new(
+            move |_entry: &crate::storage::InboxRow| {
+                let n = round.fetch_add(
+                    1, std::sync::atomic::Ordering::SeqCst);
+                let text = if n == 0 {
+                    "TOOL_CALL {\"tool\": \"write_file\", \
+                     \"args\": {\"path\": \"x.md\", \
+                     \"content\": \"nope\"}}".to_string()
+                } else {
+                    "I cannot write files.".to_string()
+                };
+                Box::pin(async move { text })
+            });
+        let rt = AgentRuntime::new(store.clone(), responder);
+        let entry = store.send_message(
+            "user", "a", "write x", "", BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+        let audit = store.tool_events("a").unwrap();
+        assert_eq!(audit.len(), 1);
+        assert_eq!(audit[0].2, "tool.denied",
+                   "the refusal is audited");
+        let t = store.transcript("a-s-main").unwrap();
+        let tool_msg = t.iter().find(|m| m.role == "tool").unwrap();
+        assert!(tool_msg.content.contains("denied:"),
+                "the model SEES the denial: {}",
+                tool_msg.content);
+        // Nothing was written anywhere.
+        assert!(!std::path::Path::new("x.md").exists());
         rt.shutdown();
     }
 

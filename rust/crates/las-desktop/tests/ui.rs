@@ -498,3 +498,25 @@ fn tools_screen_shows_vocabulary_and_grant_matrix() {
     h.get_all(by().label_contains("under construction")).next()
         .expect("the screen states honestly what is not built");
 }
+
+#[test]
+fn projects_screen_creates_and_staffs_a_project() {
+    let store = store_with_team();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Projects,
+        project_name: "Launch Prep".into(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    // A REAL action: clicking Create persists the project.
+    h.get_all(by().label("Create")).next().unwrap().click();
+    h.run();
+    // The open header shows the member list (0 members so far).
+    h.get_all(by().label("members (0): (none)")).next()
+        .expect("the new project is listed, open, empty");
+    // Add a member through the real store path the button drives.
+    store.add_project_member("launch-prep", "researcher").unwrap();
+    h.run();
+    h.get_all(by().label("members (1): researcher")).next()
+        .expect("the member shows in the project");
+}

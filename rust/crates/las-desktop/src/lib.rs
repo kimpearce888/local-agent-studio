@@ -18,7 +18,8 @@ pub use bootstrap::RuntimeHandle;
 mod screens;
 pub use screens::{channels_screen, history_screen,
                   providers_screen, sessions_screen,
-                  teams_screen, tools_screen};
+                  teams_screen, tools_screen,
+                  projects_screen};
 
 /// The mandate's fourteen navigation areas (section 14).
 /// The tool vocabulary agents can be granted explicitly (mandate
@@ -36,11 +37,11 @@ pub const NAV_AREAS: [&str; 14] = [
 ];
 
 /// Areas whose engine subsystem is wired into las-core today.
-const LIVE_AREAS: [&str; 9] = [
+const LIVE_AREAS: [&str; 10] = [
     "Dashboard", "Agents", "Inbox & Messages", "Sessions & Memory",
     "Collaboration Channels", "Agent Teams / Network",
     "Providers & Models", "Activity & History",
-    "Tools & Integrations",
+    "Tools & Integrations", "Projects",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +53,7 @@ pub enum NavArea {
     Channels,
     Teams,
     Providers,
+    Projects,
     History,
     Tools,
     Planned(usize),     // index into NAV_AREAS
@@ -96,6 +98,10 @@ pub struct AppState {
     // Activity & History screen.
     pub history_selected_run: String,
     // Teams / topology screen.
+    /// Projects screen buffers.
+    pub project_name: String,
+    pub project_desc: String,
+    pub project_agent_input: String,
     pub rule_src: String,
     pub rule_dst: String,
     pub rule_message: bool,
@@ -135,6 +141,9 @@ impl AppState {
                 std::sync::Mutex::new(Vec::new())),
             runtime: None,
             history_selected_run: String::new(),
+            project_name: String::new(),
+            project_desc: String::new(),
+            project_agent_input: String::new(),
             rule_src: String::new(),
             rule_dst: String::new(),
             rule_message: true,
@@ -207,6 +216,7 @@ pub fn draw_shell(ui: &mut egui::Ui, state: &mut AppState) {
             NavArea::Providers => providers_screen(ui, state),
             NavArea::History => history_screen(ui, state),
             NavArea::Tools => tools_screen(ui, state),
+            NavArea::Projects => projects_screen(ui, state),
             NavArea::Planned(i) => planned_screen(ui, NAV_AREAS[i]),
         }
         ui.add_space(6.0);

@@ -46,13 +46,14 @@ reference and migration source, kept runnable for parity tests.
 
 ## What is NOT done (do not claim otherwise)
 
-- Tool EXECUTION inside a model turn (the permission broker and the
-  Rule of Two; the grant matrix UI exists and the runtime records
-  grants, but no tool call is executed yet), projects/workspaces/
-  artifacts as first-class entities, MCP client, hardened web fetch,
-  Landlock sandboxing (audit items 5, 10, 12). Context assembly is a
-  chars/4 approximation (deliberate; a real tokenizer is optional
-  future work). Packaging: .deb AND AppImage are built and
+- Tool execution v1 is IN (broker, jailed executors, audit, the
+  TOOL_CALL loop, Rule-of-Two flags) but the Ask-once/Ask-each grant
+  modes need the interactive approval gate (v1 grants are Always or
+  denied), shell/code and MCP tools are P1, web_fetch still needs
+  redirect pinning (hardened fetch, audit item 5), artifacts as
+  first-class entities, Landlock sandboxing (audit items 10, 12).
+  Context assembly is a chars/4 approximation (deliberate; a real
+  tokenizer is optional future work). Packaging: .deb AND AppImage are built and
   structurally verified; INSTALLING/RUNNING them needs root/FUSE -
   environment-blocked, recorded honestly. Versions are unified at
   0.4.0.

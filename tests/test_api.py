@@ -125,7 +125,10 @@ class TestRuns(ApiTestBase):
             self.assertEqual(status, 200, body)
             run_id = body["run_id"]
             import time
-            for _ in range(200):
+            # 60s wall budget: a throttled CI runner can boot the
+            # engine ~10x slower than a laptop (CI run 28 flaked
+            # when this deadline was 10s).
+            for _ in range(int(60 / 0.05)):
                 status, state = self.call(f"/runs/{run_id}")
                 if state.get("status") in ("succeeded", "failed", "cancelled"):
                     break
@@ -156,7 +159,7 @@ class TestRuns(ApiTestBase):
             run_id = body["run_id"]
             import time
             time.sleep(0.3)
-            for _ in range(100):
+            for _ in range(int(60 / 0.05)):
                 _, st = self.call(f"/runs/{run_id}")
                 if st.get("status") in ("succeeded", "failed", "cancelled"):
                     break
