@@ -67,15 +67,20 @@ def _max_symbol_version(binary: Path, prefix: str) -> str | None:
     best_s = None
     for line in r.stdout.splitlines():
         for tok in line.split():
-            if not tok.startswith(prefix):
+            # objdump prints versioned symbols parenthesized:
+            # "(GLIBC_2.35)"; the prefix is followed by an
+            # UNDERSCORE, then dotted numbers.
+            tok = tok.strip("()")
+            rest = tok[len(prefix):] if tok.startswith(prefix) \
+                else ""
+            if not rest.startswith("_"):
                 continue
             try:
-                nums = tuple(int(p) for p in
-                             tok[len(prefix):].split("."))
+                nums = tuple(int(p) for p in rest[1:].split("."))
             except ValueError:
                 continue
             if best is None or nums > best:
-                best, best_s = nums, tok[len(prefix):]
+                best, best_s = nums, rest[1:]
     return best_s
 
 
@@ -92,11 +97,19 @@ def shared_depends(binary: Path) -> str:
     r = subprocess.run(["ldd", str(binary)],
                        capture_output=True, text=True)
     for line in r.stdout.splitlines():
-        lib = line.strip().split("=>")
-        if len(lib) < 2 or "not found" in line:
+        if "=>" not in line or "not found" in line:
             continue
-        so = lib[0].strip()
-        q = subprocess.run(["dpkg", "-S", so],
+        right = line.split("=>", 1)[1]
+        resolved = right.split("(")[0].strip()
+        # usrmerge: dpkg records /usr/lib/... but ldd reports
+        # through the /lib symlink; searching the SHORT name
+        # instead hits wrong-arch multilib packages (CI caught
+        # libc6-i386 creeping in that way).
+        if resolved.startswith("/lib/"):
+            resolved = "/usr/lib/" + resolved[len("/lib/"):]
+        if not resolved.startswith("/"):
+            continue
+        q = subprocess.run(["dpkg", "-S", resolved],
                            capture_output=True, text=True)
         if q.returncode == 0 and ":" in q.stdout:
             # Trim the multiarch qualifier dpkg reports.
