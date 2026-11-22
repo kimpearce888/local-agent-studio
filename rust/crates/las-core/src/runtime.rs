@@ -14,10 +14,70 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 
-/// How an agent answers a delivered item. Production wires this to
-/// the inference scheduler; tests provide deterministic replies.
-pub type Responder =
-    Arc<dyn Fn(&InboxRow) -> String + Send + Sync + 'static>;
+use std::future::Future;
+use std::pin::Pin;
+
+/// How an agent answers a delivered item: an async factory so
+/// production can await the shared inference scheduler and the
+/// provider HTTP call. Tests provide deterministic replies.
+pub type AsyncResponder = Arc<
+    dyn Fn(&InboxRow) -> Pin<Box<dyn Future<Output = String> + Send>>
+        + Send + Sync + 'static>;
+
+/// The production responder: resolve the agent's current profile,
+/// take a fair scheduler slot for its (provider, model), then run the
+/// blocking HTTP chat on the blocking pool. Scheduler fairness and
+/// bounded concurrency therefore apply to every real model turn.
+pub fn production_responder(
+    store: Arc<CoreStore>,
+    scheduler: Arc<crate::scheduler::InferenceScheduler>,
+    adapters: Arc<crate::providers::AdapterRegistry>,
+) -> AsyncResponder {
+    Arc::new(move |entry: &InboxRow| {
+        let store = store.clone();
+        let scheduler = scheduler.clone();
+        let adapters = adapters.clone();
+        let recipient = entry.recipient.clone();
+        let payload = entry.payload_json.clone();
+        Box::pin(async move {
+            let agent = match store.agent(&recipient) {
+                Ok(a) => a,
+                Err(_) => return "(agent unavailable)".into(),
+            };
+            let provider = agent.profile.model_provider.clone();
+            let model = agent.profile.model_id.clone();
+            let adapter = match adapters.get(&provider) {
+                Some(a) => a,
+                None => return format!(
+                    "(no adapter registered for {provider})"),
+            };
+            let key = crate::scheduler::ModelKey {
+                provider: provider.clone(), model: model.clone() };
+            let _permit = scheduler.acquire(key, &recipient).await;
+            let prompt = serde_json::from_str::<serde_json::Value>(
+                &payload).ok()
+                .and_then(|v| v.get("content").and_then(
+                    |c| c.as_str()).map(str::to_string))
+                .unwrap_or_else(|| payload.clone());
+            let messages = vec![
+                crate::providers::ChatMessage::new(
+                    "system", &agent.profile.system_prompt),
+                crate::providers::ChatMessage::new("user", &prompt),
+            ];
+            let params: serde_json::Value =
+                serde_json::from_str(&agent.profile.params_json)
+                    .unwrap_or(serde_json::Value::Null);
+            let call = tokio::task::spawn_blocking(move || {
+                adapter.chat(&model, &messages, &params)
+            }).await;
+            match call {
+                Ok(Ok(result)) => result.content,
+                Ok(Err(e)) => format!("(provider error: {e})"),
+                Err(e) => format!("(join error: {e})"),
+            }
+        })
+    })
+}
 
 pub enum AgentCommand {
     /// Hand one persisted inbox entry to the agent actor.
@@ -29,14 +89,15 @@ pub enum AgentCommand {
 struct Actor {
     agent_id: String,
     store: Arc<CoreStore>,
-    responder: Responder,
+    responder: AsyncResponder,
     /// Per-session turn locks: a session never runs two conflicting
-    /// turns simultaneously (mandate 6.2).
-    turn_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// turns simultaneously (mandate 6.2). tokio Mutex: the guard is
+    /// held across the model-call await and must be Send.
+    turn_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl Actor {
-    fn lock_for(&self, session: &str) -> Arc<Mutex<()>> {
+    fn lock_for(&self, session: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.turn_locks.lock().unwrap();
         locks.entry(session.into()).or_default().clone()
     }
@@ -78,14 +139,12 @@ impl Actor {
                 });
         }
         let lock = self.lock_for(&session);
-        let _guard = lock.lock().unwrap();
+        let _guard = lock.lock().await;
 
         let _ = self.store.update_delivery(
             entry.id, DeliveryState::InFlight.as_str(), &utc_now());
-        let seq = self.store.transcript(&session)
-            .map(|t| t.len() as i64).unwrap_or(0);
         let _ = self.store.append_message(&MessageRow {
-            session_id: session.clone(), seq,
+            session_id: session.clone(), seq: 0,   // SQL-allocated
             role: "user".into(),
             content: format!("[{}] from {}: {}",
                              entry.kind, entry.sender, entry.payload_json),
@@ -93,10 +152,11 @@ impl Actor {
             model: String::new(), ts: utc_now(),
         });
 
-        // The model reply (production: scheduler + provider adapter).
-        let reply = (self.responder)(&entry);
+        // The model reply: scheduler + provider adapter in production,
+        // deterministic closures in tests.
+        let reply = (self.responder)(&entry).await;
         let _ = self.store.append_message(&MessageRow {
-            session_id: session.clone(), seq: seq + 1,
+            session_id: session.clone(), seq: 0,   // SQL-allocated
             role: "assistant".into(), content: reply,
             reasoning: String::new(), tool_json: String::new(),
             model: String::new(), ts: utc_now(),
@@ -116,12 +176,12 @@ impl Actor {
 /// reconstructs everything (`recover` re-delivers pending entries).
 pub struct AgentRuntime {
     store: Arc<CoreStore>,
-    responder: Responder,
+    responder: AsyncResponder,
     senders: Mutex<HashMap<String, mpsc::UnboundedSender<AgentCommand>>>,
 }
 
 impl AgentRuntime {
-    pub fn new(store: Arc<CoreStore>, responder: Responder) -> Self {
+    pub fn new(store: Arc<CoreStore>, responder: AsyncResponder) -> Self {
         Self { store, responder,
                senders: Mutex::new(HashMap::new()) }
     }
@@ -224,8 +284,10 @@ mod tests {
         let entry = store.send_message(
             "user", "a", "hello", "k1", BusyMode::Queue).unwrap();
         let rt = AgentRuntime::new(store.clone(),
-                                   Arc::new(|e| format!(
-                                       "ack {}", e.sender)));
+            Arc::new(|e: &InboxRow| {
+                let sender = e.sender.clone();
+                Box::pin(async move { format!("ack {sender}") })
+            }));
         rt.deliver(&entry).await.unwrap();
         // Give the actor a moment to finish the turn.
         for _ in 0..50 {
@@ -249,7 +311,8 @@ mod tests {
         let entry = store.send_message(
             "user", "a", "ping", "k2", BusyMode::Wait).unwrap();
         let rt = AgentRuntime::new(store.clone(),
-                                   Arc::new(|_| "pong".into()));
+            Arc::new(|_: &InboxRow| Box::pin(async {
+                "pong".to_string() })));
         let state = rt.deliver(&entry).await.unwrap();
         assert_eq!(state, DeliveryState::Acked);
         rt.shutdown();
@@ -266,11 +329,16 @@ mod tests {
                                     BusyMode::Wait).unwrap();
         let replies = Arc::new(Mutex::new(Vec::<String>::new()));
         let sink = replies.clone();
-        let rt = AgentRuntime::new(store.clone(), Arc::new(move |e| {
-            let r = format!("reply-to-{}", e.recipient);
-            sink.lock().unwrap().push(r.clone());
-            r
-        }));
+        let rt = AgentRuntime::new(store.clone(),
+            Arc::new(move |e: &InboxRow| {
+                let sink = sink.clone();
+                let recipient = e.recipient.clone();
+                Box::pin(async move {
+                    let r = format!("reply-to-{recipient}");
+                    sink.lock().unwrap().push(r.clone());
+                    r
+                })
+            }));
         let (ra, rb) = tokio::join!(rt.deliver(&ea), rt.deliver(&eb));
         assert_eq!(ra.unwrap(), DeliveryState::Acked);
         assert_eq!(rb.unwrap(), DeliveryState::Acked);
@@ -289,7 +357,8 @@ mod tests {
                                        BusyMode::Queue).unwrap();
         // Runtime restarts (no delivery happened yet).
         let rt = AgentRuntime::new(store.clone(),
-                                   Arc::new(|_| "recovered".into()));
+            Arc::new(|_: &InboxRow| Box::pin(async {
+                "recovered".to_string() })));
         assert_eq!(rt.recover().await, 1);
         for _ in 0..50 {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -300,7 +369,8 @@ mod tests {
                    "acked", "the entry was delivered after recovery");
         // A second recovery finds nothing pending.
         let rt2 = AgentRuntime::new(store.clone(),
-                                    Arc::new(|_| "x".into()));
+            Arc::new(|_: &InboxRow| Box::pin(async {
+                "x".to_string() })));
         assert_eq!(rt2.recover().await, 0);
         rt.shutdown();
         rt2.shutdown();
@@ -313,7 +383,8 @@ mod tests {
                                        BusyMode::Queue).unwrap();
         store.set_enabled("b", false).unwrap();
         let rt = AgentRuntime::new(store.clone(),
-                                   Arc::new(|_| "x".into()));
+            Arc::new(|_: &InboxRow| Box::pin(async {
+                "x".to_string() })));
         assert_eq!(rt.recover().await, 0,
                    "disabled agents receive nothing");
         assert_eq!(store.inbox_for("b").unwrap()[0].delivery_state,
@@ -327,7 +398,8 @@ mod tests {
         // Store outlives the runtime: persistence is the truth.
         let store = store_with_agents();
         let rt = AgentRuntime::new(store.clone(),
-                                   Arc::new(|_| "x".into()));
+            Arc::new(|_: &InboxRow| Box::pin(async {
+                "x".to_string() })));
         rt.shutdown();
         store.remove_agent("a", RetentionPolicy::KeepMemory).unwrap();
         assert!(store.get_agent("a").unwrap().is_none());

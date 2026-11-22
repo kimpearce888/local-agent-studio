@@ -46,13 +46,16 @@ reference and migration source, kept runnable for parity tests.
 
 ## What is NOT done (do not claim otherwise)
 
-- Real HTTP provider adapters + scheduler wiring in the runtime (the
-  responder is test-injected today), the remaining desktop screens
-  (Sessions & Memory, Channels, Teams/Network, Providers...), context
-  rollover/compaction for growing sessions, projects/workspaces/
-  artifacts, teams/topology editor, MCP client, hardened web fetch,
-  Landlock sandboxing (audit items 5, 10, 12), acceptance scenarios
-  19.3-19.8, .deb/AppImage packaging, version unification.
+- The desktop does not yet START the runtime with the production
+  responder (real model turns through the scheduler are wired and
+  tested at the library level; the Providers & Models screen and the
+  runtime bootstrapping from the UI are the next action), context
+  compaction for growing sessions (rollover exists, token-aware
+  assembly does not), projects/workspaces/artifacts as first-class
+  entities, MCP client, hardened web fetch, Landlock sandboxing
+  (audit items 5, 10, 12), scenario 19.7/19.8 walk-throughs, AppImage
+  (the .deb is built and structurally verified; root installation
+  testing is environment-blocked), version unification.
 - Shared inference scheduler, context rollover, MCP client, hardened
   web fetch, Landlock sandboxing for run_command (audit items 5, 10,
   12), recursive module registry (item 14).

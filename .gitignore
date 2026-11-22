@@ -21,3 +21,4 @@ backups/
 .vscode/
 .DS_Store
 rust/target/
+dist/

@@ -145,10 +145,15 @@ async fn s19_2_message_to_busy_agent_queued_delivered_acked_restarted() {
 
         // 2. The developer is busy: the first delivery is in flight
         //    with a SLOW responder; a second message must queue.
-        let rt = AgentRuntime::new(store.clone(), Arc::new(|e| {
-            std::thread::sleep(std::time::Duration::from_millis(120));
-            format!("ack-from-developer: {}", e.id)
-        }));
+        let rt = AgentRuntime::new(store.clone(),
+            Arc::new(|e: &las_core::storage::InboxRow| {
+                let id = e.id;
+                Box::pin(async move {
+                    tokio::time::sleep(
+                        std::time::Duration::from_millis(120)).await;
+                    format!("ack-from-developer: {id}")
+                })
+            }));
         rt.deliver(&first).await.unwrap();       // in flight, slow
 
         let second = store.send_message(
@@ -158,9 +163,13 @@ async fn s19_2_message_to_busy_agent_queued_delivered_acked_restarted() {
         // 3-5. Delivery happens at the turn boundary: after the slow
         //    turn finishes, the queued message is delivered, acked and
         //    a correlated response returns to the sender's inbox.
-        let rt2 = AgentRuntime::new(store.clone(), Arc::new(|e| {
-            format!("done: {}", e.id)
-        }));
+        let rt2 = AgentRuntime::new(store.clone(),
+            Arc::new(|e: &las_core::storage::InboxRow| {
+                let id = e.id;
+                Box::pin(async move {
+                    format!("done: {id}")
+                })
+            }));
         rt2.deliver(&second).await.unwrap();
         // Wait for both turns to complete.
         for _ in 0..100 {

@@ -375,12 +375,20 @@ impl CoreStore {
         Ok(rows)
     }
 
-    pub fn append_message(&self, m: &MessageRow) -> rusqlite::Result<i64> {
+    /// Append atomically: seq is ALLOCATED BY SQL (max+1), never
+    /// read-then-written by the caller - concurrent turns on one
+    /// session cannot collide or skip sequence numbers.
+    pub fn append_message(&self, m: &MessageRow)
+                          -> rusqlite::Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO session_messages (session_id, seq, role, content,
-             reasoning, tool_json, model, ts) VALUES (?,?,?,?,?,?,?,?)",
-            params![m.session_id, m.seq, m.role, m.content, m.reasoning,
+            "INSERT INTO session_messages (session_id, seq, role, \
+             content, reasoning, tool_json, model, ts)
+             VALUES (?1,
+                     (SELECT COALESCE(MAX(m.seq), -1) + 1
+                      FROM session_messages m WHERE m.session_id = ?1),
+                     ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![m.session_id, m.role, m.content, m.reasoning,
                     m.tool_json, m.model, m.ts])?;
         Ok(conn.last_insert_rowid())
     }
@@ -577,6 +585,63 @@ impl CoreStore {
             params![r.src, r.dst, r.may_message as i64, r.may_call as i64,
                     r.may_delegate as i64])?;
         Ok(())
+    }
+
+    /// All explicit rules (the topology editor reads this).
+    pub fn list_comm_rules(&self) -> rusqlite::Result<Vec<CommRuleRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM comm_rules ORDER BY src, dst")?;
+        let rows = stmt.query_map([], rule_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Roll a session over: mark the current segment closed, create
+    /// the next segment linked to it (mandate 9.2 rollover).  The old
+    /// transcript stays fully readable; identity continues.
+    pub fn rollover_session(&self, agent_id: &str, from: &str,
+                            title: &str) -> rusqlite::Result<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agent_sessions SET status='rolled_over'              WHERE id=?", params![from])?;
+        let fresh = format!("{agent_id}-s-{}-{:x}", from.len(),
+                            conn.last_insert_rowid().max(0));
+        // Deterministic segment id from the agent + a counter.
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_sessions WHERE agent_id=?",
+            params![agent_id], |r| r.get(0))?;
+        let fresh = format!("{agent_id}-s{}", count + 1);
+        conn.execute(
+            "INSERT INTO agent_sessions (id, agent_id, title, status,              segment_of, created_at) VALUES (?,?,?,'open',?,?)",
+            params![fresh, agent_id, title, from, utc_now()])?;
+        Ok(fresh)
+    }
+
+    /// The agent's full history across session segments, in order.
+    pub fn agent_history(&self, agent_id: &str)
+                         -> rusqlite::Result<Vec<MessageRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT m.* FROM session_messages m
+             JOIN agent_sessions s ON s.id = m.session_id
+             WHERE s.agent_id=? ORDER BY s.created_at, m.seq")?;
+        let rows = stmt.query_map(params![agent_id], message_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// All channels (id, name, project).
+    pub fn list_channels(&self)
+                         -> rusqlite::Result<Vec<(String, String,
+                                                   String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, project_id FROM channels ORDER BY id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// The effective rule for src→dst. Absent rows default to the

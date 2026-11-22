@@ -12,6 +12,9 @@
 use las_core::storage::{CoreStore, InboxRow};
 use std::sync::Arc;
 
+mod screens;
+pub use screens::{channels_screen, sessions_screen, teams_screen};
+
 /// The mandate's fourteen navigation areas (section 14).
 pub const NAV_AREAS: [&str; 14] = [
     "Dashboard", "Projects", "Agents", "Agent Teams / Network",
@@ -22,13 +25,19 @@ pub const NAV_AREAS: [&str; 14] = [
 ];
 
 /// Areas whose engine subsystem is wired into las-core today.
-const LIVE_AREAS: [&str; 3] = ["Dashboard", "Agents", "Inbox & Messages"];
+const LIVE_AREAS: [&str; 6] = [
+    "Dashboard", "Agents", "Inbox & Messages", "Sessions & Memory",
+    "Collaboration Channels", "Agent Teams / Network",
+];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum NavArea {
     Dashboard,
     Agents,
     Inbox,
+    Sessions,
+    Channels,
+    Teams,
     Planned(usize),     // index into NAV_AREAS
 }
 
@@ -45,6 +54,24 @@ pub struct AppState {
     pub compose_to: String,
     pub compose_text: String,
     pub status_line: String,
+    // Sessions & Memory screen.
+    pub sessions_selected_agent: String,
+    pub sessions_selected_session: String,
+    pub memory_category: String,
+    pub memory_content: String,
+    // Channels screen.
+    pub channel_new_id: String,
+    pub channel_new_name: String,
+    pub channel_selected: String,
+    pub channel_join_agent: String,
+    pub channel_post_author: String,
+    pub channel_post_content: String,
+    // Teams / topology screen.
+    pub rule_src: String,
+    pub rule_dst: String,
+    pub rule_message: bool,
+    pub rule_call: bool,
+    pub rule_delegate: bool,
 }
 
 impl AppState {
@@ -57,6 +84,21 @@ impl AppState {
             new_agent_model: "qwen3-8b".into(),
             compose_to: String::new(), compose_text: String::new(),
             status_line: String::new(),
+            sessions_selected_agent: String::new(),
+            sessions_selected_session: String::new(),
+            memory_category: String::new(),
+            memory_content: String::new(),
+            channel_new_id: String::new(),
+            channel_new_name: String::new(),
+            channel_selected: String::new(),
+            channel_join_agent: String::new(),
+            channel_post_author: String::new(),
+            channel_post_content: String::new(),
+            rule_src: String::new(),
+            rule_dst: String::new(),
+            rule_message: true,
+            rule_call: false,
+            rule_delegate: false,
         }
     }
 }
@@ -118,6 +160,9 @@ pub fn draw_shell(ui: &mut egui::Ui, state: &mut AppState) {
             NavArea::Dashboard => dashboard_screen(ui, state),
             NavArea::Agents => agents_screen(ui, state),
             NavArea::Inbox => inbox_screen(ui, state),
+            NavArea::Sessions => sessions_screen(ui, state),
+            NavArea::Channels => channels_screen(ui, state),
+            NavArea::Teams => teams_screen(ui, state),
             NavArea::Planned(i) => planned_screen(ui, NAV_AREAS[i]),
         }
         ui.add_space(6.0);

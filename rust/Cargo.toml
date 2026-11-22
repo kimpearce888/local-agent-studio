@@ -13,3 +13,13 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Disk-constrained build environment: minimal debug info, no
+# incremental artifacts (see BUILD_STATUS environment notes).
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false

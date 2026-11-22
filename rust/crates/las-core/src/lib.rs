@@ -2,6 +2,8 @@
 
 pub mod agents;
 pub mod communication;
+pub mod migration;
+pub mod providers;
 pub mod runtime;
 pub mod scheduler;
 pub mod storage;
@@ -11,6 +13,10 @@ pub use communication::{
     BusyMode, DelegationPayload, DeliveryState, MessageKind,
     TransferPayload,
 };
-pub use runtime::AgentRuntime;
+pub use providers::{
+    AdapterRegistry, ChatMessage, ChatResult, ModelInfo,
+    OpenAiCompatAdapter, ProviderError,
+};
+pub use runtime::{production_responder, AgentRuntime, AsyncResponder};
 pub use scheduler::{InferenceScheduler, ModelKey};
 pub use storage::CoreStore;
