@@ -362,18 +362,25 @@ headless (skips recorded honestly).
   the events test ran undecorated and failed with KeyError
   'run_id'.  Fixed in 6a4d58b; all three removal verifications pass
   locally again.
-- **Flake root cause NARROWED (runs 33/35/38, 3.12 job,
-  removal-copy suites)**: run 38 finally carried the working
-  self-diagnosis - the state shows `failure_code:
-  RUN-THREAD-CRASHED`: the run THREAD CRASHES with an exception
-  (caught by the coordinator hardening from 2fd8e50, recorded as
-  run.failed; ~24s into the run, before the first attempt).
-  Runs 33/35 showed the same window stuck at 'running' - blocked
-  vs crashed may be two faces of one fault.  100 local iterations
-  did not reproduce it.  The coordinator now records the FULL
-  STACK in the run.failed payload and the test dumps the event
-  payloads + all thread stacks on failure - the next CI occurrence
-  names the exception and the exact line.
+- **Flake ROOT CAUSE FOUND AND FIXED (runs 33/35/38/39, 3.12
+  job, removal-copy suites)**: the stack-recording diagnosis (run
+  39) caught it red-handed - `IndexError: tuple index out of range`
+  at `storage._row_to_event(r["event_id"])` from the RUN thread.
+  The Python Store shared ONE sqlite3 connection between the API
+  handler threads and the run-coordinator thread
+  (`check_same_thread=False` only disables the check; concurrent
+  use must be serialized by the application).  A poll-side SELECT
+  iterating the shared connection while the run thread executed
+  and committed could hand the reader a zero-column Row; in the
+  run thread this crashed the run (caught since 2fd8e50 and
+  recorded as RUN-THREAD-CRASHED), and the same contention window
+  explains the run-33/35 stuck-at-running faces.  FIX: every
+  public Store method is now serialized through a reentrant lock
+  (storage `_locked`); a stress test (300 appends vs 2x300
+  read+verify threads) FAILS 6/7 runs with the lock disabled and
+  is deterministically green with it - the race reproduces locally
+  now, so the regression test genuinely guards the fix.  315
+  Python tests OK; all three removal verifications green.
 - Runs 36/37 (72486c8, c0fadf9): all four jobs green.
 
 ## Session: rollover + MCP client (after c0fadf9)

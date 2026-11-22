@@ -7,6 +7,19 @@ not follow-ups.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The CI run flake (runs 33/35/38/39)**: the Python store shared
+  one sqlite3 connection between the loopback API threads and the
+  run-coordinator thread without serialization
+  (`check_same_thread=False` only disables the thread check).
+  A poll-side SELECT iterating while the run thread executed could
+  hand the reader a zero-column Row and crash the run thread
+  (`IndexError` in `events()`, captured by the crash-hardened
+  coordinator as `RUN-THREAD-CRASHED` with a full stack).  Every
+  public Store method is now serialized through a reentrant lock;
+  the new stress test fails without it and is green with it.
+
 ### Added
 
 - **Automatic session rollover (mandate 9.4)**: one logical

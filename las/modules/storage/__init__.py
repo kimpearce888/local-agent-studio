@@ -10,12 +10,14 @@ state (tasks, attempts, handoffs) is rebuilt by replaying events
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 import secrets
 import shutil
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
@@ -61,10 +63,34 @@ def canonical_json(value: Any) -> str:
 from las import __version__
 
 
+def _locked(fn):
+    """Serialize store access across threads.
+
+    The store's single sqlite3 connection is shared by the loopback
+    API handler threads and the run-coordinator thread;
+    ``check_same_thread=False`` only DISABLES the thread check - the
+    sqlite3 docs require the application to serialize concurrent use
+    itself.  Without serialization, a poll-side SELECT iterating on
+    the shared connection while the run thread executes/commits can
+    hand the reader a zero-column Row and raise IndexError in the
+    middle of a run (the CI flake, runs 33/35/38/39: the run thread
+    died in events() -> _row_to_event).  RLock because store methods
+    call other store methods.
+    """
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return fn(self, *args, **kwargs)
+    return wrapper
+
+
 class Store:
     """SQLite store + run directory layout for one data root."""
 
     def __init__(self, data_dir: str):
+        # Serializes every public store method across the API
+        # server and run threads (see _locked).
+        self._lock = threading.RLock()
         self.data_dir = os.path.abspath(data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
         os.makedirs(os.path.join(self.data_dir, "plans"), exist_ok=True)
@@ -144,11 +170,13 @@ class Store:
         dest = os.path.join(self.data_dir, "backups", f"studio.db.{ts}.{tag}.bak")
         shutil.copy2(self.db_path, dest)
 
+    @_locked
     def close(self) -> None:
         self.db.close()
 
     # -- events (spec 6.3) -------------------------------------------------
 
+    @_locked
     def append(self, run_id: str, type_: str, payload: dict | None = None) -> Event:
         """Append one event, extending the hash chain. Returns the event."""
         if type_ not in EVENT_TYPES:
@@ -174,6 +202,7 @@ class Store:
         self.db.commit()
         return event
 
+    @_locked
     def first_event(self, run_id: str) -> Event:
         """The run's first event (run.created, which carries the plan)."""
         row = self.db.execute(
@@ -181,6 +210,7 @@ class Store:
             (run_id,)).fetchone()
         return self._row_to_event(row) if row else None
 
+    @_locked
     def events(self, run_id: str, after: int = 0) -> list[Event]:
         rows = self.db.execute(
             "SELECT * FROM events WHERE run_id=? AND seq>? ORDER BY seq", (run_id, after))
@@ -190,6 +220,7 @@ class Store:
         return Event(r["event_id"], r["run_id"], r["seq"], r["ts"], r["schema_version"],
                      r["type"], json.loads(r["payload"]), r["prev_hash"], r["hash"])
 
+    @_locked
     def verify(self, run_id: str) -> bool:
         """Verify a run's hash chain (spec 12)."""
         prev = "0" * 64
@@ -207,6 +238,7 @@ class Store:
             prev = e.hash
         return True
 
+    @_locked
     def run_ids(self) -> list[str]:
         rows = self.db.execute(
             "SELECT run_id, MIN(rowid) AS first FROM events GROUP BY run_id"
@@ -215,21 +247,27 @@ class Store:
 
     # -- run directory layout (spec 6.4) ------------------------------------
 
+    @_locked
     def run_dir(self, run_id: str) -> str:
         return os.path.join(self.data_dir, "runs", run_id)
 
+    @_locked
     def workspace_dir(self, run_id: str) -> str:
         return os.path.join(self.run_dir(run_id), "workspace")
 
+    @_locked
     def attempt_dir(self, run_id: str, task_id: str, attempt_id: str) -> str:
         return os.path.join(self.run_dir(run_id), "attempts", task_id, attempt_id)
 
+    @_locked
     def handoff_path(self, run_id: str, task_id: str) -> str:
         return os.path.join(self.run_dir(run_id), "handoffs", f"{task_id}.json")
 
+    @_locked
     def export_dir(self, run_id: str) -> str:
         return os.path.join(self.run_dir(run_id), "export")
 
+    @_locked
     def write_attempt_file(self, run_id: str, task_id: str, attempt_id: str,
                            name: str, content: str, append: bool = False) -> str:
         d = self.attempt_dir(run_id, task_id, attempt_id)
@@ -240,6 +278,7 @@ class Store:
             fh.write(content)
         return path
 
+    @_locked
     def write_handoff(self, run_id: str, task_id: str, handoff_obj: dict) -> str:
         path = self.handoff_path(run_id, task_id)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -247,6 +286,7 @@ class Store:
             json.dump(handoff_obj, fh, ensure_ascii=False, indent=2)
         return path
 
+    @_locked
     def read_handoff(self, run_id: str, task_id: str) -> Optional[dict]:
         path = self.handoff_path(run_id, task_id)
         if not os.path.exists(path):
@@ -274,6 +314,7 @@ class Store:
 
     # -- providers ----------------------------------------------------------
 
+    @_locked
     def save_provider(self, profile: ProviderProfile) -> None:
         self.db.execute(
             "INSERT INTO providers (id, obj) VALUES (?,?)"
@@ -281,20 +322,24 @@ class Store:
             (profile.id, canonical_json(profile.to_obj())))
         self.db.commit()
 
+    @_locked
     def get_provider(self, provider_id: str) -> Optional[ProviderProfile]:
         row = self.db.execute("SELECT obj FROM providers WHERE id=?", (provider_id,)).fetchone()
         return ProviderProfile.from_obj(json.loads(row["obj"])) if row else None
 
+    @_locked
     def list_providers(self) -> list[ProviderProfile]:
         rows = self.db.execute("SELECT obj FROM providers ORDER BY id")
         return [ProviderProfile.from_obj(json.loads(r["obj"])) for r in rows]
 
+    @_locked
     def delete_provider(self, provider_id: str) -> None:
         self.db.execute("DELETE FROM providers WHERE id=?", (provider_id,))
         self.db.commit()
 
     # -- plans / templates / role profiles ------------------------------------
 
+    @_locked
     def save_plan(self, plan_obj: dict) -> None:
         self.db.execute(
             "INSERT INTO plans (id, obj, created_at) VALUES (?,?,?)"
@@ -305,10 +350,12 @@ class Store:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(plan_obj, fh, ensure_ascii=False, indent=2)
 
+    @_locked
     def get_plan(self, plan_id: str) -> Optional[dict]:
         row = self.db.execute("SELECT obj FROM plans WHERE id=?", (plan_id,)).fetchone()
         return json.loads(row["obj"]) if row else None
 
+    @_locked
     def save_template(self, template: dict) -> None:
         self.db.execute(
             "INSERT INTO templates (id, obj) VALUES (?,?)"
@@ -316,12 +363,14 @@ class Store:
             (template["id"], canonical_json(template)))
         self.db.commit()
 
+    @_locked
     def list_templates(self) -> list[dict]:
         rows = self.db.execute("SELECT obj FROM templates ORDER BY id")
         return [json.loads(r["obj"]) for r in rows]
 
     # -- role profiles (LIB-2) --------------------------------------------------
 
+    @_locked
     def save_role_profile(self, profile: dict) -> None:
         self.db.execute(
             "INSERT INTO role_profiles (id, obj) VALUES (?,?)"
@@ -329,15 +378,18 @@ class Store:
             (profile["id"], canonical_json(profile)))
         self.db.commit()
 
+    @_locked
     def list_role_profiles(self) -> list[dict]:
         rows = self.db.execute("SELECT obj FROM role_profiles ORDER BY id")
         return [json.loads(r["obj"]) for r in rows]
 
+    @_locked
     def get_role_profile(self, profile_id: str) -> Optional[dict]:
         row = self.db.execute(
             "SELECT obj FROM role_profiles WHERE id=?", (profile_id,)).fetchone()
         return json.loads(row["obj"]) if row else None
 
+    @_locked
     def delete_role_profile(self, profile_id: str) -> None:
         self.db.execute("DELETE FROM role_profiles WHERE id=?", (profile_id,))
         self.db.commit()
@@ -346,6 +398,7 @@ class Store:
     # Deleting a run removes its events, files and workspace. User-confirmed
     # only; never triggered by disablement of a module (RFI section 9).
 
+    @_locked
     def delete_run(self, run_id: str) -> None:
         self.db.execute("DELETE FROM events WHERE run_id=?", (run_id,))
         self.db.execute("DELETE FROM run_summary WHERE run_id=?", (run_id,))
@@ -356,6 +409,7 @@ class Store:
 
     # -- derived run summaries (M1 optimization) ----------------------------
 
+    @_locked
     def summary_stale_seq(self, run_id: str) -> int:
         """The event seq the cached summary was built from (-1 if absent)."""
         row = self.db.execute(
@@ -363,12 +417,14 @@ class Store:
             (run_id,)).fetchone()
         return row["updated_seq"] if row else -1
 
+    @_locked
     def current_seq(self, run_id: str) -> int:
         row = self.db.execute(
             "SELECT MAX(seq) AS m FROM events WHERE run_id=?",
             (run_id,)).fetchone()
         return row["m"] or 0
 
+    @_locked
     def get_summary(self, run_id: str) -> Optional[dict]:
         row = self.db.execute(
             "SELECT * FROM run_summary WHERE run_id=?", (run_id,)).fetchone()
@@ -382,6 +438,7 @@ class Store:
                 "planner_model": row["planner_model"] or "",
                 "worker_model": row["worker_model"] or ""}
 
+    @_locked
     def save_summary(self, run_id: str, updated_seq: int, status: str,
                      title: str, tasks_total: int, tasks_done: int,
                      tokens: int, started: str = "", duration_s: str = "",
@@ -401,6 +458,7 @@ class Store:
              tokens, started, duration_s, planner_model, worker_model))
         self.db.commit()
 
+    @_locked
     def last_activity(self, run_id: str) -> str:
         """ISO timestamp of the run's last event (retention reference)."""
         row = self.db.execute(
@@ -408,6 +466,7 @@ class Store:
             (run_id,)).fetchone()
         return row["ts"] if row else ""
 
+    @_locked
     def prune_runs(self, max_age_days: int) -> list[str]:
         """Delete runs whose last activity is older than ``max_age_days``
         (spec 6.5 data.retention: 0 means everything)."""
@@ -430,6 +489,7 @@ class Store:
                 pruned.append(run_id)
         return pruned
 
+    @_locked
     def delete_all_data(self) -> None:
         """Delete every run (events + files). Providers, plans, templates,
         role profiles and settings survive (spec S11: delete all data means
@@ -439,6 +499,7 @@ class Store:
 
     # -- settings (spec 6.5) ---------------------------------------------------
 
+    @_locked
     def get_setting(self, key: str, default: Any = None) -> Any:
         row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
         if row:
@@ -447,6 +508,7 @@ class Store:
             return SETTINGS_DEFAULTS[key]
         return default
 
+    @_locked
     def set_setting(self, key: str, value: Any) -> None:
         self.db.execute(
             "INSERT INTO settings (key, value) VALUES (?,?)"

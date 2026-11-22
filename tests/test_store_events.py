@@ -99,3 +99,51 @@ class TestStoreData(StoreTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConcurrentAccess(unittest.TestCase):
+    """The store's connection is shared by the API threads and the
+    run thread; without serialization a reader can receive a
+    zero-column Row mid-write (the CI flake, runs 33/35/38/39:
+    IndexError in events()).  This hammers both sides at once."""
+
+    def test_concurrent_append_and_read_never_corrupts(self):
+        import shutil
+        import tempfile
+        import threading
+        data_dir = tempfile.mkdtemp(prefix="las-conc-")
+        store = Store(data_dir)
+        store.append("r", "run.created", {"plan": {}})
+        errors: list[str] = []
+
+        def writer():
+            try:
+                for i in range(300):
+                    store.append("r", "run.paused", {"i": i})
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"writer: {exc!r}")
+
+        def reader():
+            try:
+                for _ in range(300):
+                    evs = store.events("r")
+                    if len(evs) < 1:
+                        errors.append("reader: empty event log")
+                    store.verify("r")
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"reader: {exc!r}")
+
+        threads = [threading.Thread(target=writer),
+                   threading.Thread(target=reader),
+                   threading.Thread(target=reader)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        self.assertEqual(errors, [])
+        evs = store.events("r")
+        self.assertEqual(len(evs), 301,
+                         "every append landed exactly once")
+        self.assertTrue(store.verify("r"),
+                        "the hash chain stays intact")
+        shutil.rmtree(data_dir, ignore_errors=True)
