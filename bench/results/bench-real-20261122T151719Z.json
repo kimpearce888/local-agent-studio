@@ -1,0 +1,61 @@
+{
+  "provider": {
+    "id": "zai",
+    "base_url": "http://127.0.0.1:8466",
+    "model": "glm-4-plus",
+    "note": "live server - real-model measurement; NOT the PRD reference model"
+  },
+  "capability_probe": {
+    "reachable": true,
+    "authenticated": true,
+    "models_listed": true,
+    "streaming": true,
+    "tool_calling": false,
+    "json_schema": true,
+    "token_counting": false,
+    "context_length": null,
+    "server_version": ""
+  },
+  "corpus": {
+    "goals": 30,
+    "first_attempt_valid": 20,
+    "valid_after_repair": 26,
+    "completed_without_help": 0,
+    "gate_pauses": 0,
+    "plan_failures": 4,
+    "run_failures": 26,
+    "mean_repair_rounds": 0.5
+  },
+  "resume_after_kill": {
+    "cycles": 3,
+    "resumed_ok": 0,
+    "failures": [
+      {
+        "goal": "g021",
+        "steps": 3,
+        "status": "failed"
+      },
+      {
+        "goal": "g013",
+        "steps": 6,
+        "status": "failed"
+      },
+      {
+        "goal": "g024",
+        "steps": 2,
+        "status": "failed"
+      }
+    ]
+  },
+  "cap": {
+    "status": "failed",
+    "cap_reached": true,
+    "work_after_cap": 0,
+    "model_calls": 0
+  },
+  "network": {
+    "status": "succeeded",
+    "outbound_attempts": []
+  },
+  "engine_gates_passed": true
+}
