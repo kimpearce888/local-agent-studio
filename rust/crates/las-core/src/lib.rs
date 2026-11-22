@@ -1,12 +1,14 @@
 //! Local Agent Studio core engine (Rust).
 
 pub mod agents;
+pub mod artifacts;
 pub mod communication;
 pub mod context;
 pub mod mcp;
 pub mod migration;
 pub mod providers;
 pub mod runtime;
+pub mod sandbox;
 pub mod sessions;
 pub mod scheduler;
 pub mod storage;

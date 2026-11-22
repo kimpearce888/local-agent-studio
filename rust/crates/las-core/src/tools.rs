@@ -152,6 +152,10 @@ pub struct Broker {
     /// 13.2).  `None` = MCP not configured; mcp:* calls deny
     /// honestly instead of pretending.
     mcp: Option<crate::mcp::McpClients>,
+    /// Executable names run_command may run (mandate 13.4 command
+    /// policy).  EMPTY = nothing may run (fail closed, like the
+    /// shell allowlist in audit item 11).
+    command_allowlist: Vec<String>,
     /// The agent this broker serves (audit attribution for MCP).
     agent_id: String,
     /// Tools with an approved one-shot (AskEach) pass: consumed
@@ -179,7 +183,17 @@ impl Broker {
         Self { jail_root, grants, one_shot: Vec::new(),
                web_domains: Vec::new(),
                allow_private_fetch: false,
-               mcp: None, agent_id: String::new() }
+               mcp: None, agent_id: String::new(),
+               command_allowlist: Vec::new() }
+    }
+
+    /// Command policy for run_command (mandate 13.4): the
+    /// executables the agent may run, by name.  Empty = refuse
+    /// everything.
+    pub fn with_command_allowlist(mut self, commands: Vec<String>)
+                                  -> Self {
+        self.command_allowlist = commands;
+        self
     }
 
     /// Attach the MCP registry (mandate 13.2): `mcp:<server>:<tool>`
@@ -294,6 +308,45 @@ impl Broker {
                     _ => {}
                 }
             }
+            "run_command" => {
+                // Explicit argument arrays only (mandate 13.4):
+                // argv[0..] must be a non-empty array of non-empty
+                // strings - never a shell string.
+                let Some(argv) = call.args.get("argv")
+                    .and_then(|v| v.as_array()) else {
+                    return Decision::Deny(
+                        "args.argv must be an array of strings");
+                };
+                if argv.is_empty() || argv.iter().any(|a|
+                    a.as_str().map(str::is_empty) != Some(false)) {
+                    return Decision::Deny(
+                        "args.argv must be non-empty strings");
+                }
+                let argv0 = argv[0].as_str().unwrap_or("");
+                // Command policy: fail closed on an empty allowlist.
+                let base = argv0.rsplit('/').next()
+                    .unwrap_or(argv0);
+                if self.command_allowlist.is_empty() {
+                    return Decision::Deny(
+                        "command allowlist is empty; run_command \
+                         is fail-closed");
+                }
+                if !self.command_allowlist.iter()
+                    .any(|c| c == base) {
+                    return Decision::Deny(
+                        "executable is not in the command \
+                         allowlist");
+                }
+                if let Some(t) = call.args.get("timeout_secs") {
+                    match t.as_u64() {
+                        Some(v) if (1..=crate::sandbox::
+                                    MAX_TIMEOUT_SECS)
+                            .contains(&v) => {}
+                        _ => return Decision::Deny(
+                            "timeout_secs must be 1-60"),
+                    }
+                }
+            }
             "web_fetch" => {
                 let url = call.args.get("url").and_then(
                     |v| v.as_str()).unwrap_or("");
@@ -385,6 +438,9 @@ impl Broker {
                 if call.tool.starts_with("mcp:") {
                     return self.mcp_call(call);
                 }
+                if call.tool == "run_command" {
+                    return self.run_command(call);
+                }
                 match call.tool.as_str() {
                 "read_file" => self.read_file(
                     call.args["path"].as_str().unwrap()),
@@ -398,6 +454,43 @@ impl Broker {
                 _ => unreachable!("authorize filters vocabulary"),
                 }
             }
+        }
+    }
+
+    /// One sandboxed command (mandate 13.4): Landlock-confined,
+    /// argument-array-only, time-limited with process-tree
+    /// cancellation, rlimits, capped output.  Fails closed when
+    /// the kernel cannot sandbox (see sandbox.rs).
+    fn run_command(&self, call: &ToolCall) -> ToolOutcome {
+        let argv: Vec<String> = call.args["argv"].as_array()
+            .map(|a| a.iter().filter_map(|v|
+                v.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let timeout = call.args.get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(crate::sandbox::DEFAULT_TIMEOUT_SECS);
+        match crate::sandbox::run_confined(
+            &self.jail_root, &argv, timeout) {
+            Ok(run) => {
+                let mut output = run.output.clone();
+                if run.truncated {
+                    output.push_str(
+                        "\n(output cut at 64 KB)");
+                }
+                ToolOutcome {
+                    ok: run.ok,
+                    output: if run.ok {
+                        output
+                    } else {
+                        format!("exit {:?}: {}",
+                                run.exit_code, output)
+                    },
+                    detail: serde_json::json!({
+                        "sandboxed": "landlock",
+                        "timed_out": run.timed_out}),
+                }
+            }
+            Err(e) => ToolOutcome::err(format!("run_command: {e}")),
         }
     }
 
@@ -724,6 +817,103 @@ pub fn format_tool_result(call: &ToolCall,
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn run_command_authorization_gates_every_axis() {
+        let jail = std::env::temp_dir().join(format!(
+            "las-runcmd-auth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&jail);
+        std::fs::create_dir_all(&jail).unwrap();
+        let call = |argv: serde_json::Value| ToolCall {
+            tool: "run_command".into(),
+            args: serde_json::json!({"argv": argv}),
+        };
+        let ok = serde_json::json!(["touch", "out.txt"]);
+
+        // (1) No grant: denied.
+        let b = Broker::new(&jail, vec![]);
+        assert!(matches!(b.authorize(&call(ok.clone())),
+                         Decision::Deny(_)));
+        // (2) Grant but EMPTY allowlist: fail closed.
+        let b = Broker::new(&jail, parse_grants(
+            r#"[{"tool":"run_command","mode":"always"}]"#));
+        let d = b.authorize(&call(ok.clone()));
+        assert!(matches!(&d, Decision::Deny(m)
+                         if m.contains("allowlist is empty")),
+                "{d:?}");
+        // (3) Allowlisted name passes; another name does not.
+        let b = b.with_command_allowlist(vec!["touch".into()]);
+        assert!(matches!(b.authorize(&call(ok.clone())),
+                         Decision::Allow));
+        let d = b.authorize(&call(serde_json::json!(
+            ["sh", "-c", "echo hi"])));
+        assert!(matches!(&d, Decision::Deny(m)
+                         if m.contains("not in the command \
+                                           allowlist")), "{d:?}");
+        // (4) argv must be a non-empty array of non-empty strings.
+        for bad in [
+            serde_json::json!([]),
+            serde_json::json!([""]),
+            serde_json::json!("touch out.txt"),
+            serde_json::json!({}),
+        ] {
+            let reason = format!("{bad:?}");
+            let d = b.authorize(&call(bad));
+            assert!(matches!(d, Decision::Deny(_)),
+                    "argv {reason} must be denied");
+        }
+        // (5) Timeout bounds.
+        let mut c = call(ok.clone());
+        c.args["timeout_secs"] = serde_json::json!(0);
+        assert!(matches!(b.authorize(&c), Decision::Deny(_)));
+        c.args["timeout_secs"] =
+            serde_json::json!(super::super::sandbox::MAX_TIMEOUT_SECS
+                              + 1);
+        assert!(matches!(b.authorize(&c), Decision::Deny(_)));
+        // (6) Ask-mode defers through the approval gate like every
+        // other tool.
+        let b = Broker::new(&jail, parse_grants(
+            r#"[{"tool":"run_command","mode":"ask_each"}]"#))
+            .with_command_allowlist(vec!["touch".into()]);
+        let out = b.execute(&call(ok.clone()));
+        assert!(!out.ok && out.output.starts_with("deferred:"),
+                "{}", out.output);
+        let _ = std::fs::remove_dir_all(&jail);
+    }
+
+    #[test]
+    fn run_command_execution_fails_closed_or_confines() {
+        let jail = std::env::temp_dir().join(format!(
+            "las-runcmd-exec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&jail);
+        std::fs::create_dir_all(&jail).unwrap();
+        let b = Broker::new(&jail, parse_grants(
+            r#"[{"tool":"run_command","mode":"always"}]"#))
+            .with_command_allowlist(vec!["touch".into()]);
+        let call = ToolCall {
+            tool: "run_command".into(),
+            args: serde_json::json!({
+                "argv": ["touch", "ran.txt"]}),
+        };
+        let out = b.execute(&call);
+        match crate::sandbox::landlock_abi() {
+            None => {
+                assert!(!out.ok, "{:?}", out.output);
+                assert!(out.output.contains("Landlock"),
+                        "fail-closed reason: {}", out.output);
+                assert!(out.output.contains("failing closed"));
+                assert!(!jail.join("ran.txt").exists());
+            }
+            Some(_) => {
+                assert!(out.ok, "{:?}", out.output);
+                assert!(jail.join("ran.txt").exists(),
+                        "the command really ran inside the jail");
+            }
+        }
+        let _ = std::fs::remove_dir_all(&jail);
+    }
+
     use super::*;
 
     fn broker(grants: &[&str]) -> Broker {

@@ -523,6 +523,64 @@ fn projects_screen_creates_and_staffs_a_project() {
 }
 
 #[test]
+fn artifacts_screen_registers_versions_and_deletes() {
+    let dir = std::env::temp_dir().join(format!(
+        "las-artifacts-entities-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = Arc::new(
+        CoreStore::open(dir.join("t.db")).unwrap());
+    store.create_agent("researcher", "Researcher", "",
+        &ProfileSpec {
+            system_prompt: "You research.".into(),
+            model_provider: "mock".into(),
+            model_id: "m".into(),
+            params: serde_json::Value::Null,
+            tool_grants: vec![],
+        }).unwrap();
+    let ws = dir.join("workspaces").join("researcher");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("report.md"), "draft one")
+        .unwrap();
+    // A versioned artifact registered from the core API.
+    let row = las_core::artifacts::register(
+        &store, "researcher", "report.md", "report.md", "proj",
+        &serde_json::json!({"source": "user"}), None).unwrap();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Artifacts,
+        artifacts_agent: "researcher".into(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    h.get_all(by().label_contains(&row.artifact_id)).next()
+        .expect("the registered artifact is listed");
+    h.get_all(by().label("proj")).next()
+        .expect("the project scope is visible");
+    // Click the artifact: the preview shows the real bytes.
+    h.get_all(by().label_contains(&row.artifact_id)).next()
+        .unwrap().click();
+    h.run();
+    h.get_all(by().label_contains("draft one")).next()
+        .expect("artifact preview reads the current bytes");
+
+    // Select a workspace file and register it through the button.
+    h.get_all(by().label("report.md")).next().unwrap().click();
+    h.run();
+    h.get_all(by().label(
+        "Register selected file as artifact")).next()
+        .unwrap().click();
+    h.run();
+    h.get_all(by().label_contains("(report.md)")).next()
+        .expect("the new artifact is listed after registering");
+
+    // Delete it again through the button.
+    h.get_all(by().label("Delete selected artifact")).next()
+        .unwrap().click();
+    h.run();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn artifacts_screen_browses_real_workspace_files() {
     let dir = std::env::temp_dir().join(format!(
         "las-artifacts-{}", std::process::id()));

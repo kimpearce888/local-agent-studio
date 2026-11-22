@@ -83,19 +83,38 @@ pub fn production_responder(
                 == Some("user") {
                 transcript.pop();
             }
-            let budget = params.get("context_budget")
+            let raw_budget = params.get("context_budget")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize)
                 .unwrap_or(crate::context::
                            DEFAULT_CONTEXT_BUDGET_TOKENS);
+            // Mandate 9.3: the provider's own token counts calibrate
+            // the budget (see context::calibrate) and every call's
+            // exact usage is persisted with our pre-call estimate.
+            let last = store.last_token_usage(
+                &recipient, &provider, &model).ok().flatten();
+            let (budget, _basis) =
+                crate::context::calibrate(raw_budget, last);
             let messages = crate::context::assemble_context(
                 &agent.profile.system_prompt, &memories,
                 &transcript, &prompt, budget);
+            let pre_call_estimate: i64 = messages.iter()
+                .map(|m| crate::context::estimate_tokens(&m.content)
+                     as i64).sum();
+            let chat_model = model.clone();
             let call = tokio::task::spawn_blocking(move || {
-                adapter.chat(&model, &messages, &params)
+                adapter.chat(&chat_model, &messages, &params)
             }).await;
             match call {
-                Ok(Ok(result)) => result.content,
+                Ok(Ok(result)) => {
+                    if result.tokens_in > 0 {
+                        let _ = store.record_token_usage(
+                            &recipient, &provider, &model,
+                            result.tokens_in, result.tokens_out,
+                            pre_call_estimate);
+                    }
+                    result.content
+                }
                 Ok(Err(e)) => format!("(provider error: {e})"),
                 Err(e) => format!("(join error: {e})"),
             }
@@ -156,9 +175,15 @@ impl Actor {
                     "/nonexistent-las-in-memory-store")
             });
         let _ = std::fs::create_dir_all(&jail);
+        let commands: Vec<String> = params.get("command_allowlist")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|c|
+                c.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
         crate::tools::Broker::new(jail, grants)
             .with_one_shot(one_shot)
             .with_web_domains(domains)
+            .with_command_allowlist(commands)
             .with_mcp(self.mcp.clone(), self.agent_id.clone())
     }
 
@@ -570,6 +595,7 @@ mod tests {
             &crate::mcp::McpServerConfig {
                 id: "docs".into(),
                 command: "python3".into(),
+                url: None,
                 args: vec![
                     "tests/fixtures/mcp_echo_server.py".into()],
                 env: Default::default(),
@@ -853,6 +879,65 @@ mod tests {
                    "user delivery + assistant reply");
         assert_eq!(transcript[1].content, "ack user");
         assert_eq!(store.status("a").unwrap(), AgentStatus::Idle);
+        rt.shutdown();
+    }
+
+    #[tokio::test]
+    async fn provider_usage_is_recorded_with_our_estimate() {
+        // Mandate 9.3 end to end: the production responder calls a
+        // real (local) HTTP endpoint, and the provider's EXACT
+        // token counts land in token_usage next to our pre-call
+        // estimate - the input every later budget calibration uses.
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let body = concat!(
+                    r#"{"choices":[{"message":{"content":"ok"}}],"#,
+                    r#""usage":{"prompt_tokens":420,"#,
+                    r#""completion_tokens":7}}"#);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: \
+                     application/json\r\nContent-Length: {}\r\n\
+                     Connection: close\r\n\r\n{}",
+                    body.len(), body);
+                let _ = stream.write_all(resp.as_bytes());
+            }
+        });
+        let store = Arc::new(CoreStore::in_memory().unwrap());
+        store.create_agent("u", "u", "", &ProfileSpec {
+            system_prompt: "You are u.".into(),
+            model_provider: "localmock".into(),
+            model_id: "m".into(),
+            params: serde_json::Value::Null,
+            tool_grants: vec![],
+        }).unwrap();
+        let mut adapters = crate::providers::AdapterRegistry::new();
+        adapters.register("localmock",
+            crate::providers::OpenAiCompatAdapter::new(
+                &format!("http://{addr}"), None).unwrap());
+        let scheduler = Arc::new(
+            crate::scheduler::InferenceScheduler::new(4, 2));
+        let responder = production_responder(
+            store.clone(), scheduler, Arc::new(adapters));
+        let rt = AgentRuntime::new(store.clone(), responder);
+        let entry = store.send_message(
+            "user", "u", "count me", "", BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+
+        let last = store.last_token_usage("u", "localmock", "m")
+            .unwrap().expect("usage recorded");
+        assert_eq!(last.0, 420, "the provider's exact count");
+        assert!(last.1 > 0, "our pre-call estimate: {last:?}");
+        // And the reply really came from the endpoint.
+        let t = store.transcript("u-s-main").unwrap();
+        assert!(t.iter().any(|m| m.content.contains("ok")),
+                "the model answered");
         rt.shutdown();
     }
 

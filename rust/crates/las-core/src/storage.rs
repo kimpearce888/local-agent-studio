@@ -203,6 +203,32 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     enabled INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS token_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_tokens INTEGER NOT NULL,
+    completion_tokens INTEGER NOT NULL,
+    estimate INTEGER NOT NULL,
+    ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_token_usage
+    ON token_usage (agent_id, provider, model, id);
+CREATE TABLE IF NOT EXISTS artifacts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    artifact_id TEXT NOT NULL,          -- logical id, stable across versions
+    version INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    agent_id TEXT NOT NULL,             -- ownership (mandate 10)
+    project_id TEXT NOT NULL DEFAULT '',-- '' = agent-private; set = project-shared
+    rel_path TEXT NOT NULL,             -- path inside the OWNER's workspace jail
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    provenance TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    UNIQUE (artifact_id, version)
+);
 CREATE TABLE IF NOT EXISTS blackboard (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_type TEXT NOT NULL,               -- note | finding | task | question | decision | artifact
@@ -283,6 +309,21 @@ pub struct MessageRow {
     pub tool_json: String,
     pub model: String,
     pub ts: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactRow {
+    pub id: i64,
+    pub artifact_id: String,
+    pub version: i64,
+    pub name: String,
+    pub agent_id: String,
+    pub project_id: String,
+    pub rel_path: String,
+    pub sha256: String,
+    pub size: i64,
+    pub provenance: String,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -423,6 +464,17 @@ impl CoreStore {
     }
 
     /// The member agent ids of one project.
+    pub fn projects_for_agent(&self, agent_id: &str)
+                              -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT project_id FROM project_members \
+             WHERE agent_id=?1 ORDER BY project_id")?;
+        let rows = stmt.query_map(params![agent_id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn project_members(&self, project_id: &str)
                            -> rusqlite::Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
@@ -722,6 +774,120 @@ impl CoreStore {
             Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0))
         })?.collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    // -- token usage (mandate 9.3) ---------------------------------------
+    //
+    // The provider's EXACT token counts for every model call, with
+    // our pre-call chars/4 estimate of the same request, so later
+    // budgeting can calibrate against reality (context::calibrate).
+
+    pub fn record_token_usage(&self, agent_id: &str, provider: &str,
+                              model: &str, prompt_tokens: i64,
+                              completion_tokens: i64,
+                              estimate: i64)
+                              -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO token_usage (agent_id, provider, model, \
+             prompt_tokens, completion_tokens, estimate, ts) \
+             VALUES (?,?,?,?,?,?,?)",
+            params![agent_id, provider, model, prompt_tokens,
+                    completion_tokens, estimate, utc_now()])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// The most recent (prompt_tokens, our_estimate) observation
+    /// for one agent/provider/model, or None.
+    pub fn last_token_usage(&self, agent_id: &str, provider: &str,
+                            model: &str)
+        -> rusqlite::Result<Option<(i64, i64)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT prompt_tokens, estimate FROM token_usage \
+             WHERE agent_id=?1 AND provider=?2 AND model=?3 \
+             ORDER BY id DESC LIMIT 1")?;
+        let mut rows = stmt.query_map(
+            params![agent_id, provider, model],
+            |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    // -- artifacts (mandate 10) ------------------------------------------
+    //
+    // Artifacts are EXPLICIT references to files inside an owner
+    // agent's workspace jail: versions, sha256, ownership,
+    // provenance, optional project sharing.  The registry never
+    // moves or copies bytes by itself; sharing happens through the
+    // explicit export primitive (las-core/src/artifacts.rs).
+
+    pub fn insert_artifact(&self, a: &ArtifactRow)
+                           -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO artifacts (artifact_id, version, name, \
+             agent_id, project_id, rel_path, sha256, size, \
+             provenance, created_at)
+             VALUES (?1,
+                     (SELECT COALESCE(MAX(a.version), 0) + 1
+                      FROM artifacts a WHERE a.artifact_id = ?1),
+                     ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![a.artifact_id, a.name, a.agent_id,
+                    a.project_id, a.rel_path, a.sha256, a.size,
+                    a.provenance, a.created_at])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// The LATEST version of every artifact visible to one owner:
+    /// its own plus everything shared with the project.
+    pub fn list_artifacts(&self, agent_id: &str, project_id: &str)
+        -> rusqlite::Result<Vec<ArtifactRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM artifacts a
+             WHERE a.version = (
+                 SELECT MAX(b.version) FROM artifacts b
+                 WHERE b.artifact_id = a.artifact_id)
+               AND (a.agent_id = ?1
+                    OR (?2 != '' AND a.project_id = ?2))
+             ORDER BY a.created_at, a.artifact_id")?;
+        let rows = stmt.query_map(params![agent_id, project_id],
+                                  artifact_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// One logical artifact's full version history, oldest first.
+    pub fn artifact_history(&self, artifact_id: &str)
+        -> rusqlite::Result<Vec<ArtifactRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM artifacts WHERE artifact_id=?1 \
+             ORDER BY version")?;
+        let rows = stmt.query_map(params![artifact_id],
+                                  artifact_from_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn latest_artifact(&self, artifact_id: &str)
+        -> rusqlite::Result<Option<ArtifactRow>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT * FROM artifacts WHERE artifact_id=?1 \
+             ORDER BY version DESC LIMIT 1")?;
+        let mut rows = stmt.query_map(params![artifact_id],
+                                      artifact_from_row)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    /// Delete every version of one artifact (the registry entry;
+    /// the owner's workspace file itself is the agent's and stays).
+    pub fn delete_artifact(&self, artifact_id: &str)
+                           -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM artifacts WHERE artifact_id=?1",
+                     params![artifact_id])
     }
 
     /// Append one tool-broker decision (spec 5.9: every call is
@@ -1246,6 +1412,15 @@ fn session_from_row(r: &Row) -> rusqlite::Result<SessionRow> {
         id: r.get("id")?, agent_id: r.get("agent_id")?,
         title: r.get("title")?, status: r.get("status")?,
         segment_of: r.get("segment_of")?, created_at: r.get("created_at")?,
+    })
+}
+
+fn artifact_from_row(r: &rusqlite::Row) -> rusqlite::Result<ArtifactRow> {
+    Ok(ArtifactRow {
+        id: r.get(0)?, artifact_id: r.get(1)?, version: r.get(2)?,
+        name: r.get(3)?, agent_id: r.get(4)?, project_id: r.get(5)?,
+        rel_path: r.get(6)?, sha256: r.get(7)?, size: r.get(8)?,
+        provenance: r.get(9)?, created_at: r.get(10)?,
     })
 }
 

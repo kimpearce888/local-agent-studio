@@ -911,6 +911,100 @@ pub fn artifacts_screen(ui: &mut egui::Ui, state: &mut AppState) {
         ui.label("Enter an agent id to browse its workspace.");
         return;
     }
+
+    // Registered artifacts: versioned first-class references
+    // (mandate 10) - versions, sha256, ownership, provenance,
+    // project sharing, preview, export and deletion live here; the
+    // raw file browser below still shows the workspace itself.
+    ui.separator();
+    ui.strong("Registered artifacts (versioned references)");
+    let mut projects: Vec<String> = store
+        .projects_for_agent(&agent).unwrap_or_default();
+    projects.push(String::new());   // own/private scope
+    let mut rows: Vec<las_core::storage::ArtifactRow> = Vec::new();
+    for pid in &projects {
+        for a in las_core::artifacts::list(&store, &agent, pid) {
+            if !rows.iter().any(|r|
+                r.artifact_id == a.artifact_id) {
+                rows.push(a);
+            }
+        }
+    }
+    if rows.is_empty() {
+        ui.label("No registered artifacts yet: select a workspace \
+                  file below and register it.");
+    } else {
+        egui::Grid::new("artifact-entities").striped(true)
+            .num_columns(6).show(ui, |ui| {
+                ui.strong("Artifact");
+                ui.strong("Ver");
+                ui.strong("Owner");
+                ui.strong("Project");
+                ui.strong("Size");
+                ui.strong("SHA-256");
+                ui.end_row();
+                for a in &rows {
+                    if ui.selectable_label(
+                        state.artifacts_selected_artifact
+                            == a.artifact_id,
+                        format!("{} ({})", a.artifact_id, a.name))
+                        .clicked() {
+                        state.artifacts_selected_artifact =
+                            a.artifact_id.clone();
+                    }
+                    ui.label(a.version.to_string());
+                    ui.label(&a.agent_id);
+                    ui.label(if a.project_id.is_empty() {
+                        "(private)".to_string()
+                    } else { a.project_id.clone() });
+                    ui.label(format!("{} B", a.size));
+                    ui.label(a.sha256.chars().take(12)
+                             .collect::<String>() + "…");
+                    ui.end_row();
+                }
+            });
+    }
+    // Register / delete / preview act on the current selections.
+    ui.horizontal(|ui| {
+        let file_ready = !state.artifacts_selected.is_empty();
+        if ui.add_enabled(
+            file_ready,
+            egui::Button::new("Register selected file as \
+                               artifact")).clicked() {
+            let rel = state.artifacts_selected.clone();
+            if let Ok(row) = las_core::artifacts::register(
+                &store, &agent, &rel, &rel, "",
+                &serde_json::json!({"source": "user"}), None) {
+                state.artifacts_selected_artifact =
+                    row.artifact_id.clone();
+            }
+        }
+        let art_ready = !state.artifacts_selected_artifact
+            .is_empty();
+        if ui.add_enabled(
+            art_ready,
+            egui::Button::new("Delete selected artifact"))
+            .clicked() {
+            let id = state.artifacts_selected_artifact.clone();
+            let _ = las_core::artifacts::delete(&store, &id);
+            state.artifacts_selected_artifact.clear();
+        }
+    });
+    if !state.artifacts_selected_artifact.is_empty() {
+        let id = state.artifacts_selected_artifact.clone();
+        match las_core::artifacts::preview(&store, &id) {
+            Ok(text) => {
+                ui.label(format!("Artifact preview ({id}):"));
+                ui.label(text);
+            }
+            Err(e) => {
+                ui.label(format!("preview unavailable: {e}"));
+            }
+        }
+    }
+    ui.separator();
+    ui.strong("Workspace files");
+
     let Some(dir) = store.data_dir().map(|d| d.join("workspaces")
                                           .join(&agent)) else {
         ui.label("No workspace: this store is in-memory.");

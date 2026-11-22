@@ -37,6 +37,45 @@ fn cap_tokens(text: &str, cap: usize) -> String {
     }
 }
 
+/// Calibrate the context budget against the provider's EXACT
+/// token counts (mandate 9.3: accurate counting through the
+/// provider when available, explicitly labelled conservative
+/// estimates otherwise).
+///
+/// `last` is the most recent observation for this agent/model:
+/// (exact prompt_tokens the provider counted, our chars/4 estimate
+/// of that same request).  When the provider counts MORE than we
+/// estimated, the raw budget under-counts the true context, so the
+/// effective budget shrinks by the observed ratio (keeping less
+/// history, safely).  When the provider counts LESS, the raw
+/// chars/4 budget is already conservative and stays.  The returned
+/// label names the basis - nothing pretends to be exact.
+pub fn calibrate(budget: usize, last: Option<(i64, i64)>)
+                 -> (usize, String) {
+    let Some((exact, estimate)) = last else {
+        return (budget, "conservative estimate (~4 chars/token); no \
+                         provider token counts observed yet".into());
+    };
+    if exact <= 0 || estimate <= 0 {
+        return (budget,
+                format!("conservative estimate (~4 chars/token); \
+                         last provider count: {exact} tokens"));
+    }
+    let ratio = exact as f64 / estimate as f64;
+    if ratio > 1.0 {
+        let effective = ((budget as f64 / ratio) as usize)
+            .max(64);
+        (effective, format!(
+            "calibrated against the provider's exact count ({exact} \
+             vs {estimate} estimated, ratio {ratio:.2}); the budget \
+             shrinks to stay safe"))
+    } else {
+        (budget, format!(
+            "conservative estimate (~4 chars/token) confirmed safe: \
+             provider counted {exact} where we estimated {estimate}"))
+    }
+}
+
 /// Assemble the model-turn context under `budget` tokens:
 ///
 /// 1. the system prompt (kept whole, capped by the budget);
@@ -112,6 +151,32 @@ pub fn assemble_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calibrate_labels_every_basis() {
+        // No observation: plain conservative estimate.
+        let (b, label) = calibrate(8192, None);
+        assert_eq!(b, 8192);
+        assert!(label.contains("conservative"), "{label}");
+        assert!(label.contains("no provider token counts"),
+                "{label}");
+        // Provider counts MORE than we estimated: the budget must
+        // shrink, the label must name the exact count.
+        let (b, label) = calibrate(8192, Some((12_288, 8_192)));
+        assert!(b < 8192, "shrunk to stay safe: {b}");
+        assert!((b as f64 - 8192.0 / 1.5).abs() < 2.0,
+                "ratio applied: {b}");
+        assert!(label.contains("12288"), "{label}");
+        // Provider counts LESS: already safe, budget unchanged,
+        // still labelled.
+        let (b, label) = calibrate(8192, Some((4_096, 8_192)));
+        assert_eq!(b, 8192);
+        assert!(label.contains("confirmed safe"), "{label}");
+        // Degenerate observation: refuse to divide by zero.
+        let (b, label) = calibrate(8192, Some((0, 0)));
+        assert_eq!(b, 8192);
+        assert!(label.contains("conservative"), "{label}");
+    }
 
     #[test]
     fn empty_context_is_system_plus_inbound() {

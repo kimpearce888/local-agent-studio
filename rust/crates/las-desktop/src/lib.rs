@@ -107,6 +107,8 @@ pub struct AppState {
     // Teams / topology screen.
     /// Artifacts screen buffers.
     pub artifacts_agent: String,
+    /// The selected REGISTERED artifact (its logical id).
+    pub artifacts_selected_artifact: String,
     pub artifacts_selected: String,
     /// Tasks screen buffers.
     pub task_title: String,
@@ -164,6 +166,7 @@ impl AppState {
             runtime: None,
             history_selected_run: String::new(),
             artifacts_agent: String::new(),
+            artifacts_selected_artifact: String::new(),
             artifacts_selected: String::new(),
             task_title: String::new(),
             task_instructions: String::new(),

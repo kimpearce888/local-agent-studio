@@ -54,7 +54,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
          serde::Deserialize)]
 pub struct McpServerConfig {
     pub id: String,
+    /// stdio transport: the executable to spawn.  Empty when `url`
+    /// is set (Streamable HTTP).
     pub command: String,
+    /// Streamable HTTP transport: the server's endpoint URL.  Takes
+    /// precedence over `command` when set.
+    #[serde(default)]
+    pub url: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
@@ -72,6 +78,20 @@ impl McpServerConfig {
         !id.is_empty() && !id.contains(':')
     }
 
+    /// Exactly one transport: a url (Streamable HTTP) or a command
+    /// (stdio) - never both, never neither.
+    pub fn transport_valid(&self) -> Result<(), String> {
+        match (self.url.is_some(), self.command.is_empty()) {
+            (true, false) => Err(format!(
+                "server {:?}: configure either url (Streamable \
+                 HTTP) or command (stdio), not both", self.id)),
+            (false, true) => Err(format!(
+                "server {:?}: no transport - set url or command",
+                self.id)),
+            _ => Ok(()),
+        }
+    }
+
     pub fn tool_allowed(&self, tool: &str) -> bool {
         self.allow_tools.iter().any(|a| a == "*" || a == tool)
     }
@@ -86,8 +106,26 @@ pub struct McpToolDesc {
     pub input_schema: serde_json::Value,
 }
 
-pub struct McpClient {
-    cfg: McpServerConfig,
+/// One MCP transport: a stdio child process or Streamable HTTP
+/// (mandate 13.2).  Both speak JSON-RPC 2.0 with the same
+/// request/response semantics; the registry's security posture
+/// (approval, allowlists, audit, untrusted labelling) is shared
+/// above them.
+trait McpTransport: Send {
+    fn request(&mut self, method: &str,
+               params: &serde_json::Value,
+               timeout: Duration)
+               -> Result<serde_json::Value, String>;
+    fn notify(&mut self, method: &str) -> Result<(), String>;
+    /// Can this connection still serve requests?  A failed request
+    /// marks any transport dead; the registry respawns on next use.
+    fn usable(&mut self) -> bool;
+}
+
+// -- stdio transport ---------------------------------------------------
+
+struct StdioTransport {
+    server_id: String,
     child: Child,
     stdin: ChildStdin,
     /// Reader thread -> channel: each decoded JSON message arrives
@@ -101,32 +139,19 @@ pub struct McpClient {
     /// the reader thread is already gone (found by the parallel
     /// test race, see dead_server_is_reported_then_respawns).
     dead: bool,
-    /// What the server reported at initialize (serverInfo + the
-    /// protocol version it actually speaks).
-    pub server_info: String,
-    pub protocol_version: String,
 }
 
-impl Drop for McpClient {
+impl Drop for StdioTransport {
     fn drop(&mut self) {
         // Close stdin (EOF), then kill: the reader thread exits with
-        // the process; nothing outlives the client.
+        // the process; nothing outlives the transport.
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-impl McpClient {
-    /// Spawn the server and run the initialize handshake.  The
-    /// config's `enabled` flag is checked by the caller (the
-    /// registry) - this type never bypasses approval.
-    pub fn connect(cfg: McpServerConfig)
-                   -> Result<Self, String> {
-        if !McpServerConfig::valid_id(&cfg.id) {
-            return Err(format!(
-                "invalid MCP server id {:?} (':' is reserved)",
-                cfg.id));
-        }
+impl StdioTransport {
+    fn spawn(cfg: &McpServerConfig) -> Result<Self, String> {
         let mut cmd = Command::new(&cfg.command);
         cmd.args(&cfg.args)
             .envs(&cfg.env)
@@ -149,8 +174,7 @@ impl McpClient {
         std::thread::Builder::new()
             .name(format!("mcp-reader-{}", cfg.id))
             .spawn(move || {
-                let mut reader =
-                    BufReader::new(stdout);
+                let mut reader = BufReader::new(stdout);
                 loop {
                     let mut line = String::new();
                     match reader.read_line(&mut line) {
@@ -167,28 +191,10 @@ impl McpClient {
                 }
             })
             .map_err(|e| format!("reader thread: {e}"))?;
-
-        let mut client = Self {
-            cfg, child, stdin, inbox: rx, next_id: 1,
-            dead: false,
-            server_info: String::new(),
-            protocol_version: String::new(),
-        };
-        let result = client.request("initialize", &serde_json::json!({
-            "protocolVersion": PROTOCOL_VERSION,
-            "capabilities": {},
-            "clientInfo": {"name": "local-agent-studio",
-                           "version": env!("CARGO_PKG_VERSION")},
-        }), INIT_TIMEOUT)?;
-        client.protocol_version = result
-            .get("protocolVersion").and_then(|v| v.as_str())
-            .unwrap_or("unknown").to_string();
-        client.server_info = result
-            .get("serverInfo").map(|s| s.to_string())
-            .unwrap_or_else(|| "(no serverInfo)".into());
-        // The initialized notification completes the handshake.
-        client.notify("notifications/initialized")?;
-        Ok(client)
+        Ok(Self {
+            server_id: cfg.id.clone(), child, stdin, inbox: rx,
+            next_id: 1, dead: false,
+        })
     }
 
     fn write_line(&mut self, v: &serde_json::Value)
@@ -199,58 +205,281 @@ impl McpClient {
             .map_err(|e| format!("write: {e}"))?;
         self.stdin.flush().map_err(|e| format!("flush: {e}"))
     }
+}
 
-    fn notify(&mut self, method: &str) -> Result<(), String> {
-        self.write_line(&serde_json::json!({
-            "jsonrpc": "2.0", "method": method}))
-    }
-
-    /// One JSON-RPC request/response round trip, skipping server
-    /// notifications, under a timeout.
+impl McpTransport for StdioTransport {
     fn request(&mut self, method: &str,
                params: &serde_json::Value,
                timeout: Duration)
                -> Result<serde_json::Value, String> {
-        let r = self.request_inner(method, params, timeout);
+        let id = self.next_id;
+        self.next_id += 1;
+        let r = (|| {
+            self.write_line(&serde_json::json!({
+                "jsonrpc": "2.0", "id": id,
+                "method": method, "params": params}))?;
+            let deadline = std::time::Instant::now() + timeout;
+            loop {
+                let remaining = deadline
+                    .checked_duration_since(
+                        std::time::Instant::now())
+                    .ok_or_else(|| format!(
+                        "MCP {method} timed out after \
+                         {}s (server {})",
+                        timeout.as_secs(), self.server_id))?;
+                let msg = self.inbox.recv_timeout(remaining)
+                    .map_err(|_| format!(
+                        "MCP {method} failed: server {} died or \
+                         stayed silent", self.server_id))?;
+                if msg.get("id").and_then(|v| v.as_i64())
+                    == Some(id) {
+                    if let Some(err) = msg.get("error") {
+                        return Err(format!(
+                            "MCP {method} error from server {}: \
+                             {err}", self.server_id));
+                    }
+                    return Ok(msg.get("result").cloned()
+                              .unwrap_or(
+                                  serde_json::Value::Null));
+                }
+                // A notification or an unrelated response: skip.
+            }
+        })();
         if r.is_err() {
             self.dead = true;
         }
         r
     }
 
-    fn request_inner(&mut self, method: &str,
-                     params: &serde_json::Value,
-                     timeout: Duration)
-                     -> Result<serde_json::Value, String> {
+    fn notify(&mut self, method: &str) -> Result<(), String> {
+        let r = self.write_line(&serde_json::json!({
+            "jsonrpc": "2.0", "method": method}));
+        if r.is_err() {
+            self.dead = true;
+        }
+        r
+    }
+
+    fn usable(&mut self) -> bool {
+        !self.dead && matches!(self.child.try_wait(), Ok(None))
+    }
+}
+
+// -- Streamable HTTP transport ----------------------------------------
+
+struct HttpTransport {
+    server_id: String,
+    base: String,
+    /// The session the server assigned at initialize, sent back on
+    /// every request (`Mcp-Session-Id`).
+    session: Option<String>,
+    next_id: i64,
+    agent: ureq::Agent,
+    dead: bool,
+}
+
+impl HttpTransport {
+    fn new(cfg: &McpServerConfig) -> Result<Self, String> {
+        let url = cfg.url.clone()
+            .ok_or("HTTP transport needs a url")?;
+        let agent = ureq::Agent::new_with_config(
+            ureq::config::Config::builder()
+                // One generous global cap covers initialize and
+                // requests alike; per-call budgets stay honest.
+                .timeout_global(Some(REQUEST_TIMEOUT))
+                .max_redirects(0)
+                .build());
+        Ok(Self {
+            server_id: cfg.id.clone(), base: url,
+            session: None, next_id: 1, agent, dead: false,
+        })
+    }
+}
+
+/// Parse an SSE body and return the message with `want_id`
+/// (skipping server notifications, which carry no id).
+fn sse_response(body: &str, want_id: i64, server: &str)
+                -> Result<serde_json::Value, String> {
+    for chunk in body.split("\n\n") {
+        let mut data = String::new();
+        for line in chunk.lines() {
+            if let Some(d) = line.strip_prefix("data:") {
+                if !data.is_empty() {
+                    data.push('\n');
+                }
+                data.push_str(d.trim_start());
+            }
+        }
+        if data.is_empty() {
+            continue;
+        }
+        if let Ok(v) =
+            serde_json::from_str::<serde_json::Value>(&data) {
+            if v.get("id").and_then(|x| x.as_i64())
+                == Some(want_id) {
+                return Ok(v);
+            }
+        }
+    }
+    Err(format!(
+        "MCP server {server}: no response for id {want_id} in \
+         the SSE stream"))
+}
+
+impl McpTransport for HttpTransport {
+    fn request(&mut self, method: &str,
+               params: &serde_json::Value,
+               _timeout: Duration)
+               -> Result<serde_json::Value, String> {
         let id = self.next_id;
         self.next_id += 1;
-        self.write_line(&serde_json::json!({
+        let body = serde_json::json!({
             "jsonrpc": "2.0", "id": id,
-            "method": method, "params": params}))?;
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            let remaining = deadline
-                .checked_duration_since(
-                    std::time::Instant::now())
-                .ok_or_else(|| format!(
-                    "MCP {method} timed out after \
-                     {}s (server {})",
-                    timeout.as_secs(), self.cfg.id))?;
-            let msg = self.inbox.recv_timeout(remaining)
-                .map_err(|_| format!(
-                    "MCP {method} failed: server {} died or \
-                     stayed silent", self.cfg.id))?;
-            if msg.get("id").and_then(|v| v.as_i64()) == Some(id) {
-                if let Some(err) = msg.get("error") {
-                    return Err(format!(
-                        "MCP {method} error from server {}: {err}",
-                        self.cfg.id));
-                }
-                return Ok(msg.get("result").cloned()
-                          .unwrap_or(serde_json::Value::Null));
+            "method": method, "params": params}).to_string();
+        let r = (|| {
+            let mut req = self.agent.post(&self.base)
+                .header("Content-Type", "application/json")
+                .header("Accept",
+                        "application/json, text/event-stream");
+            if let Some(s) = &self.session {
+                req = req.header("Mcp-Session-Id", s);
             }
-            // A notification or an unrelated response: skip.
+            let resp = req.send(body.as_bytes())
+                .map_err(|e| format!(
+                    "MCP {method} to server {} failed: {e}",
+                    self.server_id))?;
+            let status = resp.status().as_u16();
+            if !(200..300).contains(&status) {
+                return Err(format!(
+                    "MCP {method}: server {} answered HTTP {status}",
+                    self.server_id));
+            }
+            if method == "initialize" {
+                if let Some(s) = resp.headers()
+                    .get("Mcp-Session-Id")
+                    .and_then(|v| v.to_str().ok()) {
+                    self.session = Some(s.to_string());
+                }
+            }
+            let ctype = resp.headers().get("Content-Type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("").to_lowercase();
+            let mut text = String::new();
+            resp.into_body().as_reader()
+                .read_to_string(&mut text)
+                .map_err(|e| format!("read body: {e}"))?;
+            let msg = if ctype
+                .starts_with("text/event-stream") {
+                sse_response(&text, id, &self.server_id)?
+            } else {
+                serde_json::from_str::<serde_json::Value>(&text)
+                    .map_err(|e| format!(
+                        "bad JSON from server {}: {e}",
+                        self.server_id))?
+            };
+            if let Some(err) = msg.get("error") {
+                return Err(format!(
+                    "MCP {method} error from server {}: {err}",
+                    self.server_id));
+            }
+            Ok(msg.get("result").cloned()
+               .unwrap_or(serde_json::Value::Null))
+        })();
+        if r.is_err() {
+            self.dead = true;
         }
+        r
+    }
+
+    fn notify(&mut self, method: &str) -> Result<(), String> {
+        // 202 Accepted is the documented no-response notification
+        // reply; anything else must be a success status.
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "method": method}).to_string();
+        let r = (|| {
+            let mut req = self.agent.post(&self.base)
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json");
+            if let Some(s) = &self.session {
+                req = req.header("Mcp-Session-Id", s);
+            }
+            let resp = req.send(body.as_bytes())
+                .map_err(|e| format!(
+                    "MCP notify {method} to server {} failed: {e}",
+                    self.server_id))?;
+            let status = resp.status().as_u16();
+            if !(200..300).contains(&status) {
+                return Err(format!(
+                    "MCP notify {method}: HTTP {status}"));
+            }
+            Ok(())
+        })();
+        if r.is_err() {
+            self.dead = true;
+        }
+        r
+    }
+
+    fn usable(&mut self) -> bool {
+        !self.dead
+    }
+}
+
+// -- the client facade --------------------------------------------------
+
+pub struct McpClient {
+    transport: Box<dyn McpTransport + Send>,
+    /// What the server reported at initialize (serverInfo + the
+    /// protocol version it actually speaks).
+    pub server_info: String,
+    pub protocol_version: String,
+}
+
+impl McpClient {
+    /// Connect (stdio child or Streamable HTTP) and run the
+    /// initialize handshake.  The config's approval state is the
+    /// caller's (registry's) business - this type never bypasses
+    /// it.
+    pub fn connect(cfg: McpServerConfig)
+                   -> Result<Self, String> {
+        if !McpServerConfig::valid_id(&cfg.id) {
+            return Err(format!(
+                "invalid MCP server id {:?} (\':\' is reserved)",
+                cfg.id));
+        }
+        let mut transport: Box<dyn McpTransport + Send> =
+            if cfg.url.is_some() {
+                Box::new(HttpTransport::new(&cfg)?)
+            } else {
+                Box::new(StdioTransport::spawn(&cfg)?)
+            };
+        let result = transport.request("initialize",
+            &serde_json::json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "local-agent-studio",
+                               "version": env!("CARGO_PKG_VERSION")},
+            }), INIT_TIMEOUT)?;
+        let protocol_version = result
+            .get("protocolVersion").and_then(|v| v.as_str())
+            .unwrap_or("unknown").to_string();
+        let server_info = result
+            .get("serverInfo").map(|s| s.to_string())
+            .unwrap_or_else(|| "(no serverInfo)".into());
+        // The initialized notification completes the handshake.
+        transport.notify("notifications/initialized")?;
+        Ok(Self {
+            transport,
+            server_info,
+            protocol_version,
+        })
+    }
+
+    fn request(&mut self, method: &str,
+               params: &serde_json::Value,
+               timeout: Duration)
+               -> Result<serde_json::Value, String> {
+        self.transport.request(method, params, timeout)
     }
 
     pub fn list_tools(&mut self)
@@ -311,10 +540,10 @@ impl McpClient {
         }
     }
 
-    /// Is the CONNECTION usable?  Process liveness alone is not
-    /// enough: a failed request means the next call must respawn.
+    /// Is the CONNECTION usable?  Delegates to the transport: a
+    /// failed request means the registry must reconnect.
     fn usable(&mut self) -> bool {
-        !self.dead && matches!(self.child.try_wait(), Ok(None))
+        self.transport.usable()
     }
 }
 
@@ -347,6 +576,7 @@ impl McpClients {
                 "invalid MCP server id {:?} (':' is reserved)",
                 cfg.id));
         }
+        cfg.transport_valid()?;
         let json = serde_json::to_string(cfg)
             .map_err(|e| e.to_string())?;
         self.store.upsert_mcp_server(&cfg.id, &json, false)
@@ -529,6 +759,7 @@ mod tests {
         McpServerConfig {
             id: id.into(),
             command: "python3".into(),
+            url: None,
             args: vec![FIXTURE.into()],
             env: Default::default(),
             allow_tools: vec!["*".into()],
@@ -545,7 +776,7 @@ mod tests {
         assert!(!McpServerConfig::valid_id("do:cs"));
         assert!(!McpServerConfig::valid_id(""));
         let cfg = McpServerConfig {
-            id: "s".into(), command: "x".into(),
+            id: "s".into(), command: "x".into(), url: None,
             args: vec![], env: Default::default(),
             allow_tools: vec![],
         };
@@ -742,6 +973,129 @@ mod tests {
         let out = broker.execute(&bad);
         assert!(!out.ok, "{}", out.output);
 
+    }
+
+    fn http_fixture(mode_sse: bool)
+                    -> (String, std::process::Child) {
+        let listener = std::net::TcpListener::bind(
+            "127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);   // the fixture binds it
+        let mut cmd = std::process::Command::new("python3");
+        cmd.arg("tests/fixtures/mcp_http_server.py")
+            .arg(port.to_string());
+        if mode_sse {
+            cmd.env("LAS_HTTP_MODE", "sse");
+        }
+        let child = cmd.spawn().unwrap();
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(
+                ("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        (format!("http://127.0.0.1:{port}/mcp"), child)
+    }
+
+    fn http_cfg(id: &str, base: &str) -> McpServerConfig {
+        McpServerConfig {
+            id: id.into(),
+            command: String::new(),
+            url: Some(base.into()),
+            args: vec![],
+            env: Default::default(),
+            allow_tools: vec!["*".into()],
+        }
+    }
+
+    #[test]
+    fn http_transport_config_validation() {
+        // Neither transport.
+        let mut none = http_cfg("x", "http://127.0.0.1:9/mcp");
+        none.url = None;
+        let err = none.transport_valid()
+            .expect_err("no transport refused");
+        assert!(err.contains("no transport"), "{err}");
+        // Both transports at once.
+        let mut both = http_cfg("x", "http://127.0.0.1:9/mcp");
+        both.command = "python3".into();
+        let err = both.transport_valid()
+            .expect_err("both refused");
+        assert!(err.contains("not both"), "{err}");
+        // ...and upsert enforces it.
+        let clients = McpClients::new(store());
+        assert!(clients.upsert(&both).is_err());
+    }
+
+    #[test]
+    fn http_handshake_session_and_calling() {
+        let (base, mut server) = http_fixture(false);
+        let mut client =
+            McpClient::connect(http_cfg("remote", &base))
+            .expect("connect over HTTP");
+        assert!(client.server_info.contains("http-fixture"),
+                "{}", client.server_info);
+        assert_eq!(client.protocol_version, PROTOCOL_VERSION);
+        let tools = client.list_tools().expect("tools/list");
+        let names: Vec<&str> =
+            tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"echo"), "{names:?}");
+        // The server REFUSES post-initialize requests without the
+        // Mcp-Session-Id header, so these calls prove the session
+        // is carried.
+        let out = client.call_tool(
+            "echo", &serde_json::json!({"text": "hi"}))
+            .expect("echo");
+        assert_eq!(out, "hi!");
+        let err = client.call_tool(
+            "boom", &serde_json::json!({}))
+            .expect_err("isError surfaces");
+        assert!(err.contains("reported an error"), "{err}");
+        server.kill();
+        let _ = server.wait();
+    }
+
+    #[test]
+    fn http_sse_responses_parse() {
+        let (base, mut server) = http_fixture(true);
+        let mut client =
+            McpClient::connect(http_cfg("remote-sse", &base))
+            .expect("connect over SSE-mode HTTP");
+        assert!(client.server_info.contains("http-fixture"));
+        let tools = client.list_tools().expect("tools/list");
+        assert!(tools.iter().any(|t| t.name == "echo"));
+        let out = client.call_tool(
+            "echo", &serde_json::json!({"text": "sse"}))
+            .expect("echo through an SSE body");
+        assert_eq!(out, "sse!");
+        server.kill();
+        let _ = server.wait();
+    }
+
+    #[test]
+    fn http_registry_end_to_end_with_approval() {
+        let (base, mut server) = http_fixture(false);
+        let clients = McpClients::new(store());
+        clients.upsert(&http_cfg("remote", &base)).unwrap();
+        // Approval before connection applies to HTTP too.
+        let err = clients.call("a", "remote", "echo",
+                               &serde_json::json!({}))
+            .expect_err("not enabled");
+        assert!(err.contains("not enabled"), "{err}");
+        clients.set_enabled("remote", true).unwrap();
+        let out = clients.call("a", "remote", "echo",
+                               &serde_json::json!({"text": "go"}))
+            .unwrap();
+        assert!(out.contains("UNTRUSTED content from MCP server \
+                             \"remote\""));
+        assert!(out.ends_with("go!"));
+        let events = clients.store.tool_events("a").unwrap();
+        assert!(events.iter().any(|(_, t, d, _)| {
+            t == "mcp:remote" && d == "mcp.connected" }),
+                "connect audited over HTTP");
+        server.kill();
+        let _ = server.wait();
     }
 
     #[test]
