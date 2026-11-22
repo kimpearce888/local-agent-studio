@@ -106,6 +106,19 @@ not follow-ups.
   rules are now: parent must exist, and the parent CHAIN must be
   acyclic (walked with a seen-set, self-parent included) and
   shallower than 64 levels as a sanity guard.
+- **Reproducible, execution-verified desktop artifacts**: both
+  packaging scripts are now self-contained - they scaffold the
+  whole payload tree from any fresh checkout (the deb's control
+  file derives Depends from the binary: ldd for linked libs plus
+  the dlopen'd GUI runtime set; the AppImage gets AppRun, desktop
+  entry, icon and AppStream metainfo) and verify beyond structure
+  and checksums: the unpacked/self-extracted binary must run a
+  real GUI main loop for 3 seconds on a private Xvfb display with
+  software GL and open its SQLite store.  The smoke caught and
+  fixed a real gap (the GUI's dlopen'd runtime - xkbcommon-x11,
+  libxcb-xkb, EGL - was absent from the deb's dependency list).
+  8 compiler warnings cleaned; stale one-level-nesting claims
+  fixed in ADR-0002/ARCHITECTURE.md.
 - **Provider-exact token accounting (mandate 9.3)**: every model
   call's EXACT provider token counts (usage.prompt_tokens /
   completion_tokens) are persisted in `token_usage` next to the

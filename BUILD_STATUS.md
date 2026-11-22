@@ -505,6 +505,40 @@ side untouched this session (315 at 9cb4134).
 Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
+## Session: reproducible artifacts + execution smoke (after dab50be)
+
+Both desktop artifacts now build from ANY fresh checkout and are
+verified including EXECUTION (the GUI main loop really runs):
+
+- `make_deb.py` is self-contained: it scaffolds the whole payload
+  tree (control with Depends derived from the binary - ldd for the
+  linked set, the dlopen'd GUI runtime appended:
+  libx11-6, libxcursor1, libxrandr2, libxi6, libxkbcommon0,
+  libxkbcommon-x11-0, libxcb-xkb1, libegl1, libvulkan1 - plus
+  desktop entry, stdlib-generated icon, copyright) and verifies
+  structurally (dpkg-deb -x + checksums), by metadata (dpkg-deb -I)
+  and by execution: the unpacked binary runs 3s on a private Xvfb
+  display with software EGL (llvmpipe) and opens studio.db.
+- `make_appimage.py` is likewise self-contained (AppRun, desktop
+  entry, icon, AppStream metainfo) and verifies by self-extraction
+  + checksum + the same execution smoke on the extracted payload.
+- The smoke surfaced and fixed a real gap: wgpu needs EGL and
+  xkbcommon-x11 needs libxcb-xkb, none of which this sandbox had -
+  resolved by extracting the distro packages
+  (libxkbcommon-x11-0, libxcb-xkb1, libegl1, libegl-mesa0,
+  libglx-mesa0) and pointing the smoke at them via
+  LAS_SMOKE_LIBDIR; the deb's Depends list now carries the whole
+  GUI runtime set.
+- 8 compiler warnings cleaned (dead bindings/const, needless mut,
+  egui_kittest moved to dev-dependencies, unused workspace
+  rust-version); the workspace builds warning-free.
+- Stale one-level-nesting claims fixed in ADR-0002 and
+  ARCHITECTURE.md after audit item 14.
+
+Artifacts: dist/local-agent-studio_0.4.0_amd64.deb (8.6 MB),
+dist/local-agent-studio-0.4.0-x86_64.AppImage (12 MB).  Test
+totals: Rust 141 green, Python 317 passed / 22 skipped.
+
 ## Exact next engineering action
 
 None blocking - the P0 scope, the recorded implementable P1 list
@@ -516,6 +550,8 @@ provider-exact token accounting (9.3), and audit items 13/14.  The
 ONLY remaining items are the environment-blocked verifications:
 real-server capability tests and the real-model benchmark (audit
 items 19/20 - harnesses shipped, they need a model server to point
-at), and installing the .deb/AppImage on a target machine (needs
-root/FUSE).  A tokenizer dependency would only ever be wanted
+at), and the final privileged install steps - `dpkg -i` (root) and
+a FUSE-mounted AppImage launch on a target machine; everything
+short of those two steps is now verified here, including the GUI
+actually running.  A tokenizer dependency would only ever be wanted
 beyond the provider-exact counting already in place.
