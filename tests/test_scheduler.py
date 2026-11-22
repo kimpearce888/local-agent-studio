@@ -493,5 +493,19 @@ class TestEventChain(SchedulerTestBase):
             self.assertTrue(e.ts.endswith("Z"))
 
 
+class DriverConfigTests(unittest.TestCase):
+    """The frozen config (audit item 18): wall_task_seconds is a
+    per-run task wall now (v0.4.5 - real buffered backends need more
+    than the mock-speed default)."""
+
+    def test_wall_task_seconds_recorded(self):
+        config = DriverConfig(wall_task_seconds=1234)
+        obj = config.to_public_obj()
+        self.assertEqual(obj["wall_task_seconds"], 1234)
+
+    def test_wall_task_seconds_default(self):
+        self.assertEqual(DriverConfig().wall_task_seconds, 1800)
+
+
 if __name__ == "__main__":
     unittest.main()
