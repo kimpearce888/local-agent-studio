@@ -506,6 +506,42 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.6 - the request timeout was the real task wall (and a rate-limit lesson)
+
+Following the measured t3 TIMEOUT (goal 1, v0.4.5 partial run) to the
+bottom: the z-ai SDK is NON-STREAMING, so the proxy buffers the model's
+ENTIRE generation - the first byte arrives only when the turn
+completes, and one big-context turn measured 300-600s.  The 300s
+socket timeout (urlopen timeout -> ProviderError TIMEOUT -> the
+driver's 2 retries -> task dead) killed healthy work at exactly ~300s
+per attempt; the event timeline showed all three t3 attempts dying at
+300-337s.  Fixes (pushed, 336 tests green):
+
+- HttpCore and both adapter classes default their request timeout to
+  300s (was 60s); the bench's --timeout defaults to 900s.
+- DriverConfig gains wall_task_seconds (the 30-minute task wall was a
+  DEFAULTS constant, not per-run configurable): recorded in
+  run.created, restored on resume, and real bench runs set 3600s.
+- bench gains --start/--end corpus slicing for parallel slice runs.
+
+The v0.4.5 reference benchmark RERUN could not complete this session:
+launching TWO corpus processes in parallel (to beat the wall clock)
+tripped the upstream's rate limiter hard - 142 x HTTP 429, and the
+limit did not lift for 40+ minutes even with a fully silent window
+and single-request probes.  The proxy header documented this exact
+upstream behavior; the mistake was mine (doubling the request rate).
+A hot limit would also have burned corpus goals as plan failures, so
+the bench was killed rather than allowed to run degraded.
+
+NEXT SESSION (single process only; the upstream needs a cool window):
+restart the proxy, then:
+  PYTHONPATH=. python3 -m bench --provider zai --model glm-4-plus \
+      --goals 10 --kills 2 --out bench/results
+Expected: with the 900s request timeout and the 3600s task wall, the
+gated market-brief goals should reach their approval gates (gate
+pauses) instead of dying t3 TIMEOUT; csv-summary goals should
+complete without help (proven live in the v0.4.5 validation slice).
+
 ## Session: v0.4.5 - the tool capability was never wired (the real 0/30 root cause)
 
 Chasing the remaining "models invent their own tool-call syntax"

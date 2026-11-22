@@ -166,6 +166,24 @@ not follow-ups.
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
 
+## [0.4.6] - 2026-11-22
+
+- **Fixed: the request timeout killed healthy real-model work.**  The
+  z-ai SDK is non-streaming, so the proxy buffers the model's entire
+  generation; one big-context turn measured 300-600s and the 300s
+  socket timeout (previously 60s default; 300s in the bench) failed
+  the request -> ProviderError TIMEOUT -> retries exhausted -> task
+  dead at exactly ~300s per attempt.  Adapter defaults now 300s; the
+  bench passes --timeout 900.
+- **wall_task_seconds is a DriverConfig field** (was a DEFAULTS
+  constant): per-run task wall, recorded in run.created and restored
+  on resume.  Real bench runs set 3600s - real multi-turn file work
+  through a buffered backend needs more than the mock-speed 30
+  minutes.
+- **bench --start/--end** slices the corpus for parallel or split
+  runs (do NOT run two live slices against the z-ai upstream in
+  parallel - it rate-limits hard; measured 142 x 429).
+
 ## [0.4.5] - 2026-11-22
 
 - **Fixed: the capability probe's tool_calling finding was never wired
