@@ -46,13 +46,13 @@ reference and migration source, kept runnable for parity tests.
 
 ## What is NOT done (do not claim otherwise)
 
-- Context assembly is minimal (system prompt + the single inbound
-  message; token-budgeted transcript/memory assembly is the next
-  action), agent replies are not yet routed back into the sender's
-  inbox for multi-turn agent-to-agent conversation, projects/
-  workspaces/artifacts as first-class entities, MCP client, hardened
-  web fetch, Landlock sandboxing (audit items 5, 10, 12), the Tools &
-  Integrations screen. Packaging: .deb AND AppImage are built and
+- Tool EXECUTION inside a model turn (the permission broker and the
+  Rule of Two; the grant matrix UI exists and the runtime records
+  grants, but no tool call is executed yet), projects/workspaces/
+  artifacts as first-class entities, MCP client, hardened web fetch,
+  Landlock sandboxing (audit items 5, 10, 12). Context assembly is a
+  chars/4 approximation (deliberate; a real tokenizer is optional
+  future work). Packaging: .deb AND AppImage are built and
   structurally verified; INSTALLING/RUNNING them needs root/FUSE -
   environment-blocked, recorded honestly. Versions are unified at
   0.4.0.

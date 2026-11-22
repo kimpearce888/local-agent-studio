@@ -18,7 +18,7 @@ pub use bootstrap::RuntimeHandle;
 mod screens;
 pub use screens::{channels_screen, history_screen,
                   providers_screen, sessions_screen,
-                  teams_screen};
+                  teams_screen, tools_screen};
 
 /// The mandate's fourteen navigation areas (section 14).
 /// The tool vocabulary agents can be granted explicitly (mandate
@@ -36,10 +36,11 @@ pub const NAV_AREAS: [&str; 14] = [
 ];
 
 /// Areas whose engine subsystem is wired into las-core today.
-const LIVE_AREAS: [&str; 8] = [
+const LIVE_AREAS: [&str; 9] = [
     "Dashboard", "Agents", "Inbox & Messages", "Sessions & Memory",
     "Collaboration Channels", "Agent Teams / Network",
     "Providers & Models", "Activity & History",
+    "Tools & Integrations",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +53,7 @@ pub enum NavArea {
     Teams,
     Providers,
     History,
+    Tools,
     Planned(usize),     // index into NAV_AREAS
 }
 
@@ -204,6 +206,7 @@ pub fn draw_shell(ui: &mut egui::Ui, state: &mut AppState) {
             NavArea::Teams => teams_screen(ui, state),
             NavArea::Providers => providers_screen(ui, state),
             NavArea::History => history_screen(ui, state),
+            NavArea::Tools => tools_screen(ui, state),
             NavArea::Planned(i) => planned_screen(ui, NAV_AREAS[i]),
         }
         ui.add_space(6.0);

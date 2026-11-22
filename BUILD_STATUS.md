@@ -241,6 +241,38 @@ no-tkinter simulation gives 0 collection errors with the GUI module
 skipped. With Xvfb the full GUI suite runs too: 335 tests OK.
 No 3.11+-only syntax exists anywhere (3.10 matrix safe).
 
+## Context assembly + reply routing + Tools screen (after 5d8b0f0)
+
+- **Token-budgeted context assembly** (`las-core/src/context.rs`,
+  mandate 9): a real model turn now sees the system prompt, the
+  agent's long-term memory (newest first, capped at a quarter of the
+  budget, 256 tokens per note) and the recent transcript (newest kept
+  so oldest turns drop first, emitted chronologically), then the
+  inbound message, all under a token budget (default 8192,
+  `context_budget` in profile params overrides). Tokens are a
+  documented ~4 chars/token approximation - a safety cap, not an
+  invoice; no tokenizer dependency.
+- **Reply routing** (mandate 7): when the sender is another agent,
+  the reply is persisted as a NEW inbox entry for the sender -
+  persisting IS the routing, so send_message's topology check applies
+  for real. A missing reverse rule refuses the reply and the refusal
+  is recorded in the agent's transcript as a system note, never
+  silently lost. Two integration tests: a bidirectional loop closes
+  (a -> b -> a -> b round-trips) and a one-way topology refuses with
+  a recorded refusal.
+- **Tools & Integrations screen** (live area 9/14): the grant
+  vocabulary with per-tool documentation, the per-agent grant matrix
+  read from the persisted profiles, and an honest note that tool
+  EXECUTION (permission broker, Rule of Two) is under construction -
+  no fake toggles.
+- `docs/user/release-policy.md` now documents the 0.4.0 desktop
+  artifacts (.deb + AppImage), how each is verified, and what CI
+  gates on every push.
+
+Rust: 69 tests green (50 lib incl. 4 context + 2 routing, 6
+acceptance 19.1-19.8 scenarios in 3 files, 13 UI). Python: 335 OK
+(313 headless + GUI under Xvfb).
+
 ## Exact next engineering action
 
 Context assembly for real agent work: the responder currently sends

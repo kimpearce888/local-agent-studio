@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod communication;
+pub mod context;
 pub mod migration;
 pub mod providers;
 pub mod runtime;

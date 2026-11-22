@@ -670,3 +670,67 @@ pub fn history_screen(ui: &mut egui::Ui, state: &mut AppState) {
         }
     }
 }
+
+/// The tool vocabulary (mandate 10.1): what each grant means and
+/// which agent currently holds it. Grants are the AUTHORIZATION
+/// model; the execution engine is on the roadmap and this screen
+/// says so honestly instead of faking a toggle.
+const TOOL_DOCS: [(&str, &str); 4] = [
+    ("read_file", "read a file inside the workspace"),
+    ("write_file", "create or modify a file inside the workspace"),
+    ("list_files", "enumerate the workspace tree"),
+    ("web_fetch", "fetch a URL through the hardened fetch path"),
+];
+
+pub fn tools_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Tools & Integrations");
+    let store = state.store.clone();
+
+    ui.label("Grant vocabulary (mandate 10.1: nothing is granted \
+              implicitly - a grant is explicit per agent):");
+    egui::Grid::new("tool-vocab").striped(true).num_columns(2)
+        .show(ui, |ui| {
+            ui.strong("Tool"); ui.strong("What it allows");
+            ui.end_row();
+            for (tool, doc) in TOOL_DOCS {
+                ui.label(tool);
+                ui.label(doc);
+                ui.end_row();
+            }
+        });
+    ui.add_space(6.0);
+
+    ui.label("Per-agent grants (edit them on the Agents screen when \
+              creating an agent):");
+    let agents = store.list_agents(true).unwrap_or_default();
+    egui::Grid::new("tool-grants").striped(true).num_columns(5)
+        .show(ui, |ui| {
+            for tool in crate::KNOWN_TOOLS {
+                ui.strong(tool);
+            }
+            ui.end_row();
+            if agents.is_empty() {
+                ui.label("(no agents)");
+                ui.end_row();
+            }
+            for a in &agents {
+                ui.label(&a.name);
+                let profile = store.agent(&a.id)
+                    .map(|ag| ag.profile).unwrap();
+                let grants: Vec<String> = serde_json::from_str(
+                    &profile.tool_grants_json).unwrap_or_default();
+                for tool in crate::KNOWN_TOOLS {
+                    let holds = grants.iter()
+                        .any(|g| g == tool);
+                    ui.label(if holds { "granted" } else { "-" });
+                }
+                ui.end_row();
+            }
+        });
+    ui.add_space(6.0);
+    ui.label(
+        "Grants are the authorization model of the tool engine. \
+         Executing granted tools inside a model turn (with the \
+         permission broker and the Rule of Two) is under \
+         construction; nothing on this screen pretends otherwise.");
+}

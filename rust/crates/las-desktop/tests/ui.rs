@@ -474,3 +474,27 @@ fn s19_8_full_desktop_walkthrough_with_real_model_turn() {
     drop(h);
     drop(server);
 }
+
+#[test]
+fn tools_screen_shows_vocabulary_and_grant_matrix() {
+    let store = store_with_team();
+    // researcher holds one explicit tool grant.
+    store.create_agent("scribe", "Scribe", "", &ProfileSpec {
+        system_prompt: "You take notes.".into(),
+        model_provider: "lmstudio".into(),
+        model_id: "qwen3-8b".into(),
+        params: serde_json::Value::Null,
+        tool_grants: vec!["write_file".into()],
+    }).unwrap();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Tools,
+        ..AppState::from_store(store)
+    });
+    h.run();
+    h.get_all(by().label("web_fetch")).next()
+        .expect("vocabulary lists web_fetch");
+    h.get_all(by().label("granted")).next()
+        .expect("the grant matrix shows the explicit grant");
+    h.get_all(by().label_contains("under construction")).next()
+        .expect("the screen states honestly what is not built");
+}

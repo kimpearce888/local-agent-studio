@@ -59,14 +59,37 @@ pub fn production_responder(
                 .and_then(|v| v.get("content").and_then(
                     |c| c.as_str()).map(str::to_string))
                 .unwrap_or_else(|| payload.clone());
-            let messages = vec![
-                crate::providers::ChatMessage::new(
-                    "system", &agent.profile.system_prompt),
-                crate::providers::ChatMessage::new("user", &prompt),
-            ];
             let params: serde_json::Value =
                 serde_json::from_str(&agent.profile.params_json)
                     .unwrap_or(serde_json::Value::Null);
+            // Token-budgeted context assembly (mandate 9): memory +
+            // recent transcript + the inbound message. The actor has
+            // already appended the inbound to the transcript, so the
+            // last user row IS this message - drop it (the contract
+            // is documented in context::assemble_context).
+            let session = format!("{recipient}-s-main");
+            let memories: Vec<String> = store
+                .list_memory(&recipient)
+                .map(|ms| ms.into_iter()
+                     .map(|m| m.content).collect())
+                .unwrap_or_default();
+            let mut transcript: Vec<(String, String)> = store
+                .transcript(&session)
+                .map(|ts| ts.into_iter()
+                     .map(|m| (m.role, m.content)).collect())
+                .unwrap_or_default();
+            if transcript.last().map(|(r, _)| r.as_str())
+                == Some("user") {
+                transcript.pop();
+            }
+            let budget = params.get("context_budget")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize)
+                .unwrap_or(crate::context::
+                           DEFAULT_CONTEXT_BUDGET_TOKENS);
+            let messages = crate::context::assemble_context(
+                &agent.profile.system_prompt, &memories,
+                &transcript, &prompt, budget);
             let call = tokio::task::spawn_blocking(move || {
                 adapter.chat(&model, &messages, &params)
             }).await;
@@ -157,11 +180,35 @@ impl Actor {
         let reply = (self.responder)(&entry).await;
         let _ = self.store.append_message(&MessageRow {
             session_id: session.clone(), seq: 0,   // SQL-allocated
-            role: "assistant".into(), content: reply,
+            role: "assistant".into(), content: reply.clone(),
             reasoning: String::new(), tool_json: String::new(),
             model: String::new(), ts: utc_now(),
         });
 
+        // Reply routing (mandate 7): when the sender is another
+        // agent, the reply becomes a NEW inbox entry for them -
+        // persisting it IS the routing, and send_message's topology
+        // check applies for real (a missing reverse rule refuses the
+        // reply and the refusal is recorded, never silently lost).
+        if entry.kind == "message" && entry.sender != "user" {
+            match self.store.send_message(
+                &self.agent_id, &entry.sender, &reply, "",
+                crate::communication::BusyMode::Queue) {
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = self.store.append_message(&MessageRow {
+                        session_id: session.clone(), seq: 0,
+                        role: "system".into(),
+                        content: format!(
+                            "reply to {} refused by the topology: \
+                             {e}", entry.sender),
+                        reasoning: String::new(),
+                        tool_json: String::new(),
+                        model: String::new(), ts: utc_now(),
+                    });
+                }
+            }
+        }
         let _ = self.store.update_delivery(
             entry.id, DeliveryState::Delivered.as_str(), &utc_now());
         let _ = self.store.update_delivery(
@@ -259,6 +306,78 @@ impl AgentRuntime {
 
 #[cfg(test)]
 mod tests {
+    fn echo_responder() -> AsyncResponder {
+        // Deterministic: the reply names the recipient, so routing
+        // is observable in the sender's inbox.
+        Arc::new(|entry: &crate::storage::InboxRow| {
+            let text = format!(
+                "reply from {} to {}: {}",
+                entry.recipient, entry.sender,
+                entry.payload_json);
+            Box::pin(async move { text })
+        })
+    }
+
+    #[tokio::test]
+    async fn replies_route_back_to_the_sender_agent() {
+        let store = store_with_agents();
+        // Bidirectional topology: a -> b and b -> a.
+        for (src, dst) in [("a", "b"), ("b", "a")] {
+            store.set_comm_rule(&crate::storage::CommRuleRow {
+                src: src.into(), dst: dst.into(),
+                may_message: true, may_call: true,
+                may_delegate: true,
+            }).unwrap();
+        }
+        let rt = AgentRuntime::new(
+            store.clone(), echo_responder());
+        let entry = store.send_message(
+            "a", "b", "ping", "", BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+        // b answered; the reply is a NEW inbox entry for a.
+        let a_inbox = store.inbox_for("a").unwrap();
+        assert_eq!(a_inbox.len(), 1,
+                   "the reply routed back to the sender");
+        assert!(a_inbox[0].payload_json.contains("reply from b"),
+                "routed payload is the model reply: {}",
+                a_inbox[0].payload_json);
+        // Deliver a's view of the reply: a answers too, closing the
+        // loop (the conversation continues turn by turn).
+        let mut rt2_entry = a_inbox[0].clone();
+        rt2_entry.busy_mode = BusyMode::Wait.as_str().into();
+        rt.deliver(&rt2_entry).await.unwrap();
+        let b_inbox = store.inbox_for("b").unwrap();
+        assert_eq!(b_inbox.len(), 2,
+                   "second round-trip routed again");
+        rt.shutdown();
+    }
+
+    #[tokio::test]
+    async fn refused_reply_is_recorded_not_silently_lost() {
+        let store = store_with_agents();
+        // ONE-WAY topology: a -> b only (b -> a is default-deny).
+        store.set_comm_rule(&crate::storage::CommRuleRow {
+            src: "a".into(), dst: "b".into(),
+            may_message: true, may_call: true,
+            may_delegate: true,
+        }).unwrap();
+        let rt = AgentRuntime::new(
+            store.clone(), echo_responder());
+        let entry = store.send_message(
+            "a", "b", "ping", "", BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+        // b tried to answer; the topology refused the reverse hop.
+        assert!(store.inbox_for("a").unwrap().is_empty(),
+                "no reverse hop without a rule");
+        let transcript = store.transcript("b-s-main").unwrap();
+        assert!(transcript.iter().any(|m| m.role == "system"
+            && m.content.contains("refused by the topology")),
+                "the refusal is recorded in b's transcript: {:?}",
+                transcript.iter().map(|m| m.role.clone())
+                    .collect::<Vec<_>>());
+        rt.shutdown();
+    }
+
     use super::*;
     use crate::agents::{ProfileSpec, RetentionPolicy};
 
