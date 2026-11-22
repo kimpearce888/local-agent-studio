@@ -8,6 +8,7 @@ from bench.goals import build_corpus
 from bench.harness import (
     cap_check, kill_cycles, run_corpus, socket_audit,
 )
+from las.modules.providers.mock import MockAdapter  # functional dep: the bench scenarios run on the mock provider
 
 
 class TestCorpus(unittest.TestCase):

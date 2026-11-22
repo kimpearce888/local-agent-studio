@@ -209,6 +209,38 @@ full restart) - as integration tests in
 - Python reference engine: 313 tests green headless (326+ with the
   tkinter GUI suite under Xvfb).
 
+## CI repair (after 85a127d)
+
+The GitHub Actions workflow (Python matrix 3.10/3.11/3.12) was red on
+most runs. Three root causes, all reproduced locally and fixed:
+
+1. `tests/test_gui.py` imported tkinter UNCONDITIONALLY at module
+   level; actions/setup-python builds ship WITHOUT _tkinter, so
+   unittest collection crashed before a single test ran (all three
+   matrix jobs red). Fix: the tkinter/StudioApp/PALETTES imports moved
+   behind a try/except and a `setUpModule` skips the whole module
+   honestly ("tkinter not available in this Python build" / "no
+   DISPLAY"); verified by stubbing `sys.modules['tkinter'] = None`.
+2. `tools/removal_test.py` copied the WHOLE repo into /tmp including
+   the multi-GB `rust/target` build tree - "No space left on device".
+   Fix: IGNORE now also excludes target/, node_modules and caches.
+3. Disposable-module removal was red: `s12_export.py` imported
+   reporting at module level, and `s1_wizard.py` / `bench/harness.py`
+   referenced removed modules without the documented degradation
+   marker. Fixes follow the existing optional-dep pattern: deferred
+   imports + `# optional-dep: ...` tags + a graceful error dialog
+   (export); `bench/harness.py` gains a `_mock()` helper and
+   `tests/test_bench.py` declares its functional mock dependency so
+   the removal script deletes it with the module.
+
+Verification, on a clean rsync checkout with no build artifacts:
+discovery x2 exit 0 (313 tests OK headless, 5 GUI skips), removal x3
+exit 0 ("REMOVAL VERIFIED" each), packaging smoke: the wheel builds,
+installs, `studio --version` -> 0.4.0, `import las` -> 0.4.0. The
+no-tkinter simulation gives 0 collection errors with the GUI module
+skipped. With Xvfb the full GUI suite runs too: 335 tests OK.
+No 3.11+-only syntax exists anywhere (3.10 matrix safe).
+
 ## Exact next engineering action
 
 Context assembly for real agent work: the responder currently sends

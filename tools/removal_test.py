@@ -24,7 +24,12 @@ import sys
 import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-IGNORE = shutil.ignore_patterns("__pycache__", ".git", "*.pyc", ".venv", "dist")
+IGNORE = shutil.ignore_patterns(
+    "__pycache__", ".git", "*.pyc", ".venv", "dist",
+    # build artifacts of the Rust workspace (multi-GB) and caches:
+    # the copy only ever needs the tracked Python sources
+    "target", "node_modules", ".mypy_cache", ".pytest_cache",
+    ".cargo", "appdir", "appimage-verify")
 
 
 def manifest_files_of(text: str) -> list[str]:

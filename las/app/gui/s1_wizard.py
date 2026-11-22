@@ -304,7 +304,7 @@ class SetupWizard(ttk.Frame):
 
         def run_test():
             self.test_lbl.configure(text="Running the self-test…")
-            from las.modules.selftest import run_selftest
+            from las.modules.selftest import run_selftest  # optional-dep: selftest
             try:
                 adapter = build_adapter(self.profile)
                 result = run_selftest(self.app.data, adapter)

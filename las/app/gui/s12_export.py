@@ -12,9 +12,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog
 
 from las.app.gui.widgets import Dialog
-from las.modules.reporting import (
-    ExportOptions, export_json_bundle, export_markdown, export_run,
-)
 
 
 class ExportDialog(Dialog):
@@ -63,7 +60,10 @@ class ExportDialog(Dialog):
                           padx=6, pady=(8, 0))
         self._summary()
 
-    def _options(self) -> ExportOptions:
+    def _options(self):
+        # Deferred: the export formats come from the reporting module
+        # and degrade gracefully when it is removed.
+        from las.modules.reporting import ExportOptions  # optional-dep: reporting
         return ExportOptions(
             include_plan=self.include_plan.get(),
             include_transcripts=self.include_transcripts.get(),
@@ -95,6 +95,16 @@ class ExportDialog(Dialog):
         self.summary.configure(text=" ".join(parts))
 
     def on_save(self) -> None:
+        try:
+            from las.modules.reporting import (  # optional-dep: reporting
+                export_json_bundle, export_markdown)
+        except ImportError:
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Export unavailable",
+                "The reporting module is not installed in this build.",
+                parent=self)
+            return
         fmt = self.format_var.get()
         if fmt == "markdown":
             ext, text = ".md", export_markdown(

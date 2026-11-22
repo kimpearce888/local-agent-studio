@@ -23,7 +23,11 @@ import socket
 from las.modules.execution import DriverConfig, Engine
 from las.modules.planning import Planner
 from las.modules.providers import ProviderRegistry
-from las.modules.providers.mock import MockAdapter
+def _mock(script):
+    """The bench harness is built on the mock provider; deferred so
+    importing the harness never hard-fails without it."""
+    from las.modules.providers.mock import MockAdapter  # optional-dep: providers.mock
+    return MockAdapter(script)
 from las.shared.plan_contract import Plan
 
 from bench.goals import build_corpus
@@ -115,7 +119,7 @@ def run_corpus(data_dir: str, goals=None) -> dict:
                "gate_pauses": 0, "plan_failures": 0, "run_failures": 0,
                "repair_rounds": []}
     for goal in goals:
-        adapter = MockAdapter(planner_script(goal))
+        adapter = _mock(planner_script(goal))
         result = Planner(adapter, "mock-model").plan(goal.text)
         metrics["repair_rounds"].append(result.repair_rounds)
         if result.valid:
@@ -127,7 +131,7 @@ def run_corpus(data_dir: str, goals=None) -> dict:
             continue
         engine = Engine(data_dir)
         run_id = engine.create_run(result.plan)
-        worker = MockAdapter(run_script(result.plan))
+        worker = _mock(run_script(result.plan))
         _driver(engine, run_id, worker).run()
         state = engine.state(run_id)
         if state.status == "succeeded":
@@ -154,18 +158,18 @@ def kill_cycles(data_dir: str, cycles: int = 200, seed: int = 20261121,
     result = {"cycles": cycles, "resumed_ok": 0, "failures": []}
     for i in range(cycles):
         goal = pool[rng.randrange(len(pool))]
-        adapter = MockAdapter([{"json": plan_reply(goal)}])
+        adapter = _mock([{"json": plan_reply(goal)}])
         plan = Planner(adapter, "mock-model").plan(goal.text).plan
         engine = Engine(data_dir)
         run_id = engine.create_run(plan)
-        worker = MockAdapter(run_script(plan))
+        worker = _mock(run_script(plan))
         driver = _driver(engine, run_id, worker)
         steps = rng.randint(1, max(1, len(plan.tasks) - 1))
         for _ in range(steps):
             driver.step()
         # Abandon this driver (the "kill"); a fresh one resumes the run.
         consumed = worker.chat_calls
-        remaining = MockAdapter(run_script(plan)[consumed:])
+        remaining = _mock(run_script(plan)[consumed:])
         _driver(engine, run_id, remaining).run()
         state = engine.state(run_id)
         if state.status == "succeeded":
@@ -182,11 +186,11 @@ def cap_check(data_dir: str) -> dict:
     """A tiny token cap must stop the run: CAP-REACHED is terminal, no
     task is attempted afterwards, and no extra model call is made."""
     goal = build_corpus(6)[5]                 # a 4-task goal
-    adapter = MockAdapter([{"json": plan_reply(goal)}])
+    adapter = _mock([{"json": plan_reply(goal)}])
     plan = Planner(adapter, "mock-model").plan(goal.text).plan
     engine = Engine(data_dir)
     run_id = engine.create_run(plan, cap_tokens=1)   # any call crosses it
-    worker = MockAdapter(run_script(plan))
+    worker = _mock(run_script(plan))
     _driver(engine, run_id, worker,
             DriverConfig(failure_policy="stop", cap_tokens_run=1)).run()
     state = engine.state(run_id)
@@ -231,11 +235,11 @@ class _SocketGuard:
 def socket_audit(data_dir: str) -> dict:
     """A full goal, default configuration: zero outbound connections."""
     goal = build_corpus(6)[5]                  # a non-gated 4-task goal
-    adapter = MockAdapter([{"json": plan_reply(goal)}])
+    adapter = _mock([{"json": plan_reply(goal)}])
     plan = Planner(adapter, "mock-model").plan(goal.text).plan
     engine = Engine(data_dir)
     run_id = engine.create_run(plan)
-    worker = MockAdapter(run_script(plan))
+    worker = _mock(run_script(plan))
     with _SocketGuard() as guard:
         _driver(engine, run_id, worker).run()
     state = engine.state(run_id)

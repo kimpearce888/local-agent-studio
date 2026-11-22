@@ -15,19 +15,39 @@ import sys
 import tempfile
 import unittest
 
-import tkinter as tk
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from las.app.gui.app import StudioApp                       # noqa: E402
-from las.app.gui.theme import PALETTES                      # noqa: E402
 from las.shared.plan_contract import Plan, Task, Constraint  # noqa: E402
 from las.modules.providers.mock import MockAdapter          # noqa: E402
 
+# tkinter is OPTIONAL: the CI Pythons (actions/setup-python) ship
+# without _tkinter, so importing it must never break collection.
+try:
+    import tkinter as tk                                    # noqa: E402
+    from las.app.gui.app import StudioApp                   # noqa: E402
+    from las.app.gui.theme import PALETTES                  # noqa: E402
+    _TKINTER_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on the build
+    _TKINTER_AVAILABLE = False
 
 
 def _display_available() -> bool:
     return bool(os.environ.get("DISPLAY"))
+
+
+def setUpModule():
+    """Skip the WHOLE module when the GUI cannot run at all.
+
+    Missing _tkinter (CI Pythons) or missing DISPLAY (headless)
+    both mean every test here would fail for environmental
+    reasons - skipped honestly instead of erroring collection.
+    """
+    if not _TKINTER_AVAILABLE:
+        raise unittest.SkipTest("tkinter not available in this "
+                                "Python build")
+    if not _display_available():
+        raise unittest.SkipTest("no DISPLAY - run under Xvfb to "
+                                "exercise the GUI suite")
 
 
 def make_plan(n=4, goal="Test goal", chain=True) -> Plan:
