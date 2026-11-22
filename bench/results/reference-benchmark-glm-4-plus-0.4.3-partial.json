@@ -1,0 +1,15 @@
+{
+  "model": "glm-4-plus",
+  "provider": "zai (local SDK proxy, see scripts/zai_openai_proxy.mjs)",
+  "status": "PARTIAL - corpus cut off at 25/30 goals, kill/resume phase not reached (session budget)",
+  "resume_command": "PYTHONPATH=. python3 -m bench --provider zai --model glm-4-plus --goals 30 --kills 3 --out bench/results",
+  "corpus_so_far": {
+    "valid_plans": 25,
+    "plan_validity": "25/25 plans valid (glm-4-plus plans validate 100% with the probe fix)",
+    "runs_succeeded": 0,
+    "runs_failed": 25,
+    "worker_failure_mode": "HANDOFF-INVALID on every run: H-01 (no handoff block on intermediate turns), H-03 (constraints paraphrased instead of verbatim), H-06 (facts invented without sources under the no-web config) - model behavior against the strict handoff contract, engine behaving as designed (anti-hallucination)",
+    "zero_429_errors_in_final_run": true
+  },
+  "engine_gates": "mock-validated, unchanged (318 tests OK)"
+}

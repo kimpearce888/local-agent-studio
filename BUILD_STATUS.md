@@ -551,10 +551,28 @@ CI user's uid.  privileged install itself (sudo dpkg -i / FUSE
 AppImage) still needs a target machine: the sandbox has no
 passwordless sudo and no /dev/fuse (physically verified).
 
+**Reference-model numbers (glm-4-plus, PARTIAL - session budget cut
+the corpus at 25/30 goals, kill/resume not reached)**: plans valid
+25/25 (100% - the probe fix unlocked this); runs completed without
+help 0/25 - every failure is HANDOFF-INVALID (H-01 missing handoff
+block / H-03 paraphrased constraints / H-06 invented unsourced facts
+under the no-web config), i.e. model behavior against the strict
+handoff contract, with the engine behaving as designed.  Zero 429
+errors in the final run (the proxy backoff chain absorbed 13).
+Resume with: PYTHONPATH=. python3 -m bench --provider zai --model
+glm-4-plus --goals 30 --kills 3 --out bench/results  (proxy:
+scripts/zai_openai_proxy.mjs, preset: zai).  Full record:
+bench/results/reference-benchmark-glm-4-plus-0.4.3-partial.json.
+The honest reading so far: the PRD 85% completed-without-help target
+is far beyond glm-4-plus under the no-web corpus config; that gap is
+the product's next design question (web-gated research tasks or a
+partial/blocked handoff pattern for unsatisfiable goals), not an
+engine defect.
+
 What genuinely remains for a human with the target machine:
-`sudo dpkg -i` / the FUSE-mounted AppImage launch, and reviewing the
-reference-model numbers against the PRD targets (the pipeline that
-produced them is in the repo; see the 0.4.3 bench results).
+`sudo dpkg -i` / the FUSE-mounted AppImage launch (physically
+impossible in this sandbox: no passwordless sudo, no /dev/fuse -
+verified), and the reference-model kill/resume phase (command above).
 
 ## Session: reproducible artifacts + execution smoke (after dab50be)
 
