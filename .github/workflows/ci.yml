@@ -52,3 +52,56 @@ jobs:
       - name: Release build of the desktop shell
         working-directory: rust
         run: cargo build --release -p las-desktop --locked
+
+  # Desktop release artifacts (release-policy.md): built, verified
+  # and uploaded on every push.  Verification includes EXECUTION -
+  # the unpacked/self-extracted binary must run a real GUI main
+  # loop for 3 seconds on a private Xvfb display.  The runner has
+  # root, so the GUI libraries are properly INSTALLED here -
+  # stronger than the extracted-package fallback a rootless build
+  # host uses (LAS_SMOKE_LIBDIR).
+  artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install eframe build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev \
+            libwayland-dev wayland-protocols
+      - name: Install packaging and GUI-smoke dependencies
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            xvfb squashfs-tools \
+            libx11-6 libxcursor1 libxrandr2 libxi6 \
+            libxkbcommon0 libxkbcommon-x11-0 libxcb-xkb1 \
+            libegl1 libegl-mesa0 libglx-mesa0
+          # Only needed to RUN an unextracted AppImage; the
+          # scripts extract it, so a missing package is fine.
+          sudo apt-get install -y libfuse2 \
+            || sudo apt-get install -y libfuse2t64 || true
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+      - name: Release build of the desktop shell
+        working-directory: rust
+        run: cargo build --release -p las-desktop --locked
+      - name: Build and verify the .deb
+        run: python3 scripts/make_deb.py --skip-build
+      - name: Build and verify the AppImage
+        run: |
+          curl -fsSL -o /tmp/appimagetool.AppImage \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          python3 scripts/make_appimage.py --skip-build \
+            --appimagetool /tmp/appimagetool.AppImage
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-agent-studio-desktop-linux
+          path: |
+            dist/*.deb
+            dist/*.AppImage
+          if-no-files-found: error
