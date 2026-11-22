@@ -185,7 +185,7 @@ def main() -> int:
         "Comment=A local-first desktop studio for AI agent teams\n"
         "Exec=las-desktop\n"
         "Terminal=false\n"
-        "Categories=Development;Office;Utility;\n"
+        "Categories=Development;\n"
         "Icon=local-agent-studio\n")
     icons = APPDIR / "usr" / "share" / "icons" / "hicolor" \
         / "128x128" / "apps"
@@ -195,16 +195,44 @@ def main() -> int:
                  APPDIR / ".DirIcon")
     metainfo = (APPDIR / "usr" / "share" / "metainfo")
     metainfo.mkdir(parents=True)
+    # appstreamcli (run by appimagetool where present) REQUIRES a
+    # description, a desktop-id launchable and a release DATE; the
+    # homepage URL is a warning otherwise.  CI caught all three.
+    import datetime
+    today = datetime.date.today().isoformat()
     (metainfo / "local-agent-studio.appdata.xml").write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         '<component type="desktop-application">\n'
         '  <id>local-agent-studio</id>\n'
         '  <name>Local Agent Studio</name>\n'
-        f'  <releases><release version="{version}"/></releases>\n'
-        '  <metadata_license>MIT</metadata_license>\n'
         '  <summary>Local-first desktop studio for AI agent '
         'teams</summary>\n'
+        '  <description><p>A local-first desktop studio for '
+        'building, running and supervising teams of AI agents: '
+        'the engine, tools, MCP client and session store live '
+        'on your machine.</p></description>\n'
+        '  <launchable type="desktop-id">local-agent-studio'
+        '.desktop</launchable>\n'
+        '  <url type="homepage">https://github.com/kimpearce888/'
+        'local-agent-studio</url>\n'
+        '  <project_license>MIT</project_license>\n'
+        '  <metadata_license>MIT</metadata_license>\n'
+        f'  <releases><release version="{version}" '
+        f'date="{today}"/></releases>\n'
         '</component>\n')
+    # Validate BEFORE packaging when the tool exists, so a bad
+    # metainfo fails HERE with a readable message, not deep inside
+    # appimagetool (this sandbox lacks appstreamcli; CI has it).
+    if shutil.which("appstreamcli"):
+        r = subprocess.run(
+            ["appstreamcli", "validate", "--no-network",
+             str(metainfo / "local-agent-studio.appdata.xml")],
+            capture_output=True, text=True)
+        if r.returncode != 0:
+            print("FAIL: appstreamcli rejected the metainfo:",
+                  r.stdout, r.stderr)
+            return 1
+        print("OK: appstreamcli validated the metainfo")
 
     out = DIST / f"local-agent-studio-{version}-x86_64.AppImage"
     env = dict(os.environ, ARCH="x86_64")

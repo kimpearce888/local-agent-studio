@@ -144,7 +144,7 @@ def scaffold(version: str, depends: str) -> None:
         f"Comment={DESC}\n"
         "Exec=/usr/local/bin/las-desktop\n"
         "Terminal=false\n"
-        "Categories=Development;Office;Utility;\n"
+        "Categories=Development;\n"
         "Icon=local-agent-studio\n")
     icons = DEB_TREE / "usr" / "share" / "icons" / "hicolor" \
         / "128x128" / "apps"
