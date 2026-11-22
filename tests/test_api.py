@@ -163,6 +163,8 @@ class TestRuns(ApiTestBase):
     @unittest.skipUnless(module_installed("providers.mock"),
                          "fixture uses the providers.mock module")
     def test_run_thread_crash_records_failure(self):
+        # Same mock dependency as the other run tests: the POST
+        # builds the mock adapter before the injected crash.
         # A crash inside the run thread must become a run.failed
         # event, never a run stuck at 'running' forever (the API
         # coordinator records the crash as data and keeps serving).
@@ -191,6 +193,8 @@ class TestRuns(ApiTestBase):
         kinds = [e["type"] for e in body["events"]]
         self.assertIn("run.failed", kinds)
 
+    @unittest.skipUnless(module_installed("providers.mock"),
+                         "fixture uses the providers.mock module")
     def test_events_after_seq_polling(self):
         self._script()
         try:
