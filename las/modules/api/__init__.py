@@ -45,11 +45,22 @@ class _RunCoordinator:
 
     def start(self, engine: Engine, run_id: str, registry, models, config):
         def work():
-            driver = engine.driver(run_id, registry, models, config)
-            with self.lock:
-                self.active[run_id] = driver
             try:
+                driver = engine.driver(run_id, registry, models, config)
+                with self.lock:
+                    self.active[run_id] = driver
                 driver.run()
+            except BaseException as exc:  # noqa: BLE001
+                # A crashed run thread must never leave the run
+                # stuck at 'running' forever with no trace: turn the
+                # crash into a run.failed event (data, RUN-3) and
+                # keep serving.
+                try:
+                    engine.store.append(run_id, "run.failed", {
+                        "code": "RUN-THREAD-CRASHED",
+                        "error": f"{type(exc).__name__}: {exc}"})
+                except Exception:  # noqa: BLE001
+                    pass
             finally:
                 with self.lock:
                     self.active.pop(run_id, None)

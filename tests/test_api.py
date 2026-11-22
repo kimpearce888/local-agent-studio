@@ -133,6 +133,16 @@ class TestRuns(ApiTestBase):
                 if state.get("status") in ("succeeded", "failed", "cancelled"):
                     break
                 time.sleep(0.05)
+            if state.get("status") != "succeeded":
+                # Budget expired: dump where EVERY thread is stuck so
+                # the next CI flake diagnoses itself instead of
+                # showing a bare 'running != succeeded' (run 33).
+                import faulthandler, io
+                dump = io.StringIO()
+                faulthandler.dump_traceback(file=dump)
+                self.fail(
+                    f"run did not succeed in 60s; state={state}\n"
+                    f"--- thread dump at failure ---\n{dump.getvalue()}")
             self.assertEqual(state["status"], "succeeded", state)
             status, body = self.call(f"/runs/{run_id}/events")
             self.assertGreater(len(body["events"]), 5)
@@ -152,6 +162,35 @@ class TestRuns(ApiTestBase):
 
     @unittest.skipUnless(module_installed("providers.mock"),
                          "fixture uses the providers.mock module")
+    def test_run_thread_crash_records_failure(self):
+        # A crash inside the run thread must become a run.failed
+        # event, never a run stuck at 'running' forever (the API
+        # coordinator records the crash as data and keeps serving).
+        self._script()
+        import time
+        from unittest import mock
+        from las.modules.execution import Engine
+
+        def injected_crash(self, run_id, registry, models=None,
+                           config=None):
+            raise RuntimeError("injected crash")
+
+        with mock.patch.object(Engine, "driver", injected_crash):
+            status, body = self.call("/runs", method="POST",
+                                     body={"plan": self._plan()})
+            self.assertEqual(status, 200, body)
+            run_id = body["run_id"]
+            for _ in range(100):   # 5s: the thread records fast
+                status, state = self.call(f"/runs/{run_id}")
+                if state.get("status") != "running":
+                    break
+                time.sleep(0.05)
+        self.assertEqual(state["status"], "failed", state)
+        self.assertEqual(state["failure_code"], "RUN-THREAD-CRASHED")
+        status, body = self.call(f"/runs/{run_id}/events")
+        kinds = [e["type"] for e in body["events"]]
+        self.assertIn("run.failed", kinds)
+
     def test_events_after_seq_polling(self):
         self._script()
         try:
