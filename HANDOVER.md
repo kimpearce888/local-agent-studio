@@ -61,9 +61,13 @@ reference and migration source, kept runnable for parity tests.
   them needs root/FUSE on the target machine - environment-blocked
   here, recorded honestly.  Versions unified at 0.4.0.  The
   14-area desktop shell is complete (14/14 live, kittest-verified).
-- Shared inference scheduler, context rollover, MCP client, hardened
-  web fetch, Landlock sandboxing for run_command (audit items 5, 10,
-  12), recursive module registry (item 14).
+- Landlock sandboxing for run_command (audit item 10), MCP
+  Streamable HTTP transport and dynamic tool-schema injection (the
+  stdio MCP client core is IN: configs, approval-before-connection,
+  allowlists, grants, audit, untrusted labelling), recursive module
+  registry (item 14).  Context rollover is IN (session segments,
+  continuity summaries, restore); a model-generated summary layer
+  would ride the provider adapters when a server is configured.
 - Real-server capability tests and real-model benchmark (items 19,
   20) - blocked by the sandbox; harnesses must ship for the user.
 - Real-server capability tests and the real-model benchmark (audit

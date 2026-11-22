@@ -379,12 +379,65 @@ headless (skips recorded honestly).
   attempt crashed on StringIO.fileno, fixed in 72486c8).
 - Run 36 (72486c8): all four jobs green.
 
+## Session: rollover + MCP client (after c0fadf9)
+
+Note: this sandbox came back with the repo directory reverted to an
+old v0.3.0-era snapshot (stale reflog included); the GitHub remote
+still had c0fadf9, so a fast-forward restored the working tree with
+nothing lost.  The Rust toolchain had to be reinstalled (rustup,
+stable, cargo 1.100.0).
+
+- **Automatic session rollover (mandate 9.4)** - `las-core/src/
+  sessions.rs`, wired into the actor's turn path: the active
+  segment is resolved per turn (find-or-create `-s-main`), and when
+  the transcript exceeds the agent's policy the rollover happens
+  BEFORE the inbound is appended.  `perform_rollover` creates the
+  next segment with a code-extracted structured continuity summary
+  as its head (pinned instructions + unresolved requirements
+  verbatim, decisions, references/artifacts, recent tail), marks
+  the prior segment `rolled_over` with a closing note, and chains
+  `segment_of`.  `session_lineage` orders the segments; the
+  desktop's session combo already lists every segment with its
+  status, so prior segments are user-inspectable.
+  `restore_segment` resumes from an earlier segment by branching a
+  new one (append-only history is never rewritten).  The summary is
+  deterministic code extraction, not model-generated - documented
+  as such (no model server exists in this build sandbox).
+- **MCP client, stdio transport (mandate 13.2)** - `las-core/src/
+  mcp.rs` + broker/runtime wiring: configs persist in a new
+  `mcp_servers` table (`enabled` is the user's connection approval,
+  stored separately from the config so an import can never imply
+  it); the client spawns the server as a child speaking
+  newline-delimited JSON-RPC 2.0, does the initialize handshake,
+  lists tools/resources/prompts, and calls tools with 5 s/10 s
+  timeouts, crash detection and respawn (audited).  A connection is
+  USABLE, not merely alive: a failed request marks the client
+  broken and the next call respawns - found by a parallel-test race
+  where python closes its std streams BEFORE the process actually
+  exits (try_wait still said alive while the reader was gone).
+  Per-server `allow_tools` fails closed; per-agent grants
+  (`mcp:<server>` / `mcp:<server>:<tool>`) go through the SAME
+  broker and approval gate as built-in tools; every model-visible
+  result is labelled UNTRUSTED content; connect/restart/call are
+  audited.  Tests run against a REAL stdio server fixture
+  (tests/fixtures/mcp_echo_server.py, python3), including an
+  end-to-end model turn: TOOL_CALL -> broker -> server -> labelled
+  result in the transcript -> audit rows.  Not yet: Streamable HTTP
+  transport, dynamic MCP tool-schema injection into model turns.
+
+Test totals this session: Rust 112 green (87 las-core lib incl. 8
+sessions + 10 mcp, 6 acceptance, 19 kittest UI; workspace
+`--locked`), Python unchanged (314 at c0fadf9).
+
 ## Exact next engineering action
 
 None blocking for v0.4.0 - the P0 scope is built, tested and
 packaged.  Post-launch (P1, not release-blocking): shell/code tools
-behind Landlock (audit item 10), MCP client, artifacts as
+behind Landlock (audit item 10), MCP Streamable HTTP transport +
+dynamic tool-schema injection into model turns, artifacts as
 versioned first-class entities, a real tokenizer for context
 assembly, and the environment-blocked verifications (real-server
 capability tests and benchmark, audit items 19/20; installing the
-artifacts needs root/FUSE on a target machine).
+artifacts needs root/FUSE on a target machine).  Session rollover
+(9.4) and the stdio MCP client (13.2 core) are DONE as of this
+session.

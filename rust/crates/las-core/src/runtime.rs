@@ -67,7 +67,8 @@ pub fn production_responder(
             // already appended the inbound to the transcript, so the
             // last user row IS this message - drop it (the contract
             // is documented in context::assemble_context).
-            let session = format!("{recipient}-s-main");
+            let session = crate::sessions::current_session(
+                &store, &recipient).id;
             let memories: Vec<String> = store
                 .list_memory(&recipient)
                 .map(|ms| ms.into_iter()
@@ -113,6 +114,9 @@ struct Actor {
     agent_id: String,
     store: Arc<CoreStore>,
     responder: AsyncResponder,
+    /// Shared MCP registry (mandate 13.2): cloned into every turn's
+    /// broker so MCP tool calls route through the same grants.
+    mcp: crate::mcp::McpClients,
     /// Per-session turn locks: a session never runs two conflicting
     /// turns simultaneously (mandate 6.2). tokio Mutex: the guard is
     /// held across the model-call await and must be Send.
@@ -155,6 +159,7 @@ impl Actor {
         crate::tools::Broker::new(jail, grants)
             .with_one_shot(one_shot)
             .with_web_domains(domains)
+            .with_mcp(self.mcp.clone(), self.agent_id.clone())
     }
 
     fn lock_for(&self, session: &str) -> Arc<tokio::sync::Mutex<()>> {
@@ -184,20 +189,31 @@ impl Actor {
             entry.id, DeliveryState::Queued.as_str(), &utc_now());
         let _ = self.store.set_status(
             &self.agent_id, AgentStatus::Working);
-        let session = format!("{}-s-main", self.agent_id);
-        // The transcript FK requires the session row; create on first
-        // delivery (find-or-create, restart-safe).
-        let exists = self.store.list_sessions(&self.agent_id)
-            .map(|ss| ss.iter().any(|s| s.id == session))
-            .unwrap_or(false);
-        if !exists {
-            let _ = self.store.create_session(
-                &crate::storage::SessionRow {
-                    id: session.clone(), agent_id: self.agent_id.clone(),
-                    title: "main".into(), status: "open".into(),
-                    segment_of: String::new(), created_at: utc_now(),
-                });
+        // The active segment (find-or-create `-s-main` on first
+        // delivery, restart-safe), followed by the rollover check
+        // (mandate 9.4): when the PRIOR transcript has outgrown the
+        // agent's policy, roll over BEFORE the inbound is appended,
+        // so the inbound lands in the next segment where the logical
+        // conversation continues.
+        let mut session = crate::sessions::current_session(
+            &self.store, &self.agent_id);
+        let params: serde_json::Value = self.store
+            .agent(&self.agent_id).ok()
+            .and_then(|a| serde_json::from_str(
+                &a.profile.params_json).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let policy = crate::sessions::RolloverPolicy::from_params(
+            &params);
+        if let Ok(prior_messages) = self.store.transcript(&session.id) {
+            if crate::sessions::needs_rollover(
+                &prior_messages, &policy) {
+                if let Ok(next) = crate::sessions::perform_rollover(
+                    &self.store, &self.agent_id, &prior_messages) {
+                    session = next;
+                }
+            }
         }
+        let session = session.id;   // downstream works with the id
         let lock = self.lock_for(&session);
         let _guard = lock.lock().await;
 
@@ -347,12 +363,15 @@ pub struct AgentRuntime {
     store: Arc<CoreStore>,
     responder: AsyncResponder,
     senders: Mutex<HashMap<String, mpsc::UnboundedSender<AgentCommand>>>,
+    mcp: crate::mcp::McpClients,
 }
 
 impl AgentRuntime {
     pub fn new(store: Arc<CoreStore>, responder: AsyncResponder) -> Self {
+        let mcp = crate::mcp::McpClients::new(store.clone());
         Self { store, responder,
-               senders: Mutex::new(HashMap::new()) }
+               senders: Mutex::new(HashMap::new()),
+               mcp }
     }
 
     fn sender_for(&self, agent_id: &str)
@@ -366,6 +385,7 @@ impl AgentRuntime {
             agent_id: agent_id.into(),
             store: self.store.clone(),
             responder: self.responder.clone(),
+            mcp: self.mcp.clone(),
             turn_locks: Mutex::new(HashMap::new()),
         };
         tokio::spawn(actor.run(rx));
@@ -528,6 +548,77 @@ mod tests {
         assert_eq!(audit.len(), 1);
         assert_eq!(audit[0].1, "write_file");
         assert_eq!(audit[0].2, "tool.called");
+        rt.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn mcp_tool_call_runs_through_the_loop() {
+        // Mandate 13.2 end to end: a model turn asks for an MCP
+        // tool, the broker checks the grant, the stdio server runs,
+        // the untrusted-labelled result lands in the transcript and
+        // the audit records both the connection and the call.
+        let dir = std::env::temp_dir().join(format!(
+            "las-mcploop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(
+            CoreStore::open(dir.join("t.db")).unwrap());
+        // Register + approve the server through the same store the
+        // runtime reads (AgentRuntime builds its registry from it).
+        crate::mcp::McpClients::new(store.clone()).upsert(
+            &crate::mcp::McpServerConfig {
+                id: "docs".into(),
+                command: "python3".into(),
+                args: vec![
+                    "tests/fixtures/mcp_echo_server.py".into()],
+                env: Default::default(),
+                allow_tools: vec!["*".into()],
+            }).unwrap();
+        crate::mcp::McpClients::new(store.clone())
+            .set_enabled("docs", true).unwrap();
+        let mut spec = spec("m");
+        spec.tool_grants = vec!["mcp:docs".into()];
+        store.create_agent("m", "m", "", &spec).unwrap();
+        let round = std::sync::atomic::AtomicUsize::new(0);
+        let responder: AsyncResponder = Arc::new(
+            move |_entry: &crate::storage::InboxRow| {
+                let n = round.fetch_add(
+                    1, std::sync::atomic::Ordering::SeqCst);
+                let text = if n == 0 {
+                    "Let me use the docs server.\nTOOL_CALL \
+                     {\"tool\": \"mcp:docs:echo\", \"args\": \
+                     {\"text\": \"hey\"}}".to_string()
+                } else {
+                    "The echo came back.".to_string()
+                };
+                Box::pin(async move { text })
+            });
+        let rt = AgentRuntime::new(store.clone(), responder);
+        let entry = store.send_message(
+            "user", "m", "echo something", "", BusyMode::Wait)
+            .unwrap();
+        rt.deliver(&entry).await.unwrap();
+        let t = store.transcript("m-s-main").unwrap();
+        let roles: Vec<&str> = t.iter()
+            .map(|m| m.role.as_str()).collect();
+        assert_eq!(roles,
+                   vec!["user", "assistant", "tool", "assistant"],
+                   "the MCP tool round is part of the record");
+        assert!(t[2].content.contains("hey!"),
+                "the echo result reached the model: {}",
+                t[2].content);
+        assert!(t[2].content.contains("UNTRUSTED content"),
+                "the result is labelled: {}", t[2].content);
+        // Audit: the connection AND the authorized call.
+        let audit = store.tool_events("m").unwrap();
+        let decisions: Vec<String> = audit.iter()
+            .map(|(_, tool, d, _)| format!("{tool}:{d}"))
+            .collect();
+        assert!(decisions.iter().any(|d| d == "mcp:docs:mcp.connected"),
+                "{decisions:?}");
+        assert!(decisions.iter().any(|d|
+            d == "mcp:docs:echo:tool.called"), "{decisions:?}");
         rt.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -762,6 +853,71 @@ mod tests {
                    "user delivery + assistant reply");
         assert_eq!(transcript[1].content, "ack user");
         assert_eq!(store.status("a").unwrap(), AgentStatus::Idle);
+        rt.shutdown();
+    }
+
+    #[tokio::test]
+    async fn rollover_splits_segments_and_continues() {
+        // Mandate 9.4: with a tiny per-agent policy the session rolls
+        // over into new segments, the logical conversation continues
+        // (every turn is answered), and the lineage is inspectable.
+        let store = Arc::new(CoreStore::in_memory().unwrap());
+        store.create_agent("a", "a", "", &ProfileSpec {
+            system_prompt: "You are a.".into(),
+            model_provider: "mock".into(), model_id: "m".into(),
+            params: serde_json::json!({"rollover_max_messages": 2}),
+            tool_grants: vec![],
+        }).unwrap();
+        let rt = AgentRuntime::new(store.clone(), echo_responder());
+        for i in 0..4 {
+            let entry = store.send_message(
+                "user", "a", &format!("msg {i}"), "k", BusyMode::Wait)
+                .unwrap();
+            let state = rt.deliver(&entry).await.unwrap();
+            assert_eq!(state, DeliveryState::Acked,
+                       "every turn is answered: turn {i}");
+        }
+
+        let lineage = crate::sessions::session_lineage(&store, "a");
+        assert!(lineage.len() >= 3,
+                "the tiny policy rolled over twice: {:?}",
+                lineage.iter().map(|s| s.id.clone()).collect::<Vec<_>>());
+        assert_eq!(lineage[0].id, "a-s-main");
+        for (i, seg) in lineage.iter().enumerate() {
+            if i + 1 < lineage.len() {
+                assert_eq!(seg.status, "rolled_over");
+                assert_eq!(lineage[i + 1].segment_of, seg.id,
+                           "segments chain via segment_of");
+                let prior = store.transcript(&seg.id).unwrap();
+                assert!(prior.last().unwrap().content.contains(
+                    "rolled over to"), "inspectable closing note");
+                let head = store.transcript(&lineage[i + 1].id)
+                    .unwrap();
+                assert_eq!(head[0].role, "system");
+                assert!(head[0].content.contains(
+                    "Prior segment"), "summary head");
+            } else {
+                assert_eq!(seg.status, "open");
+            }
+        }
+
+        // The logical conversation never lost a turn: all four
+        // inbounds and all four replies are somewhere in the lineage.
+        let mut inbounds = 0;
+        let mut replies = 0;
+        for seg in &lineage {
+            for m in store.transcript(&seg.id).unwrap() {
+                if m.role == "user" && m.content.contains("msg ") {
+                    inbounds += 1;
+                }
+                if m.role == "assistant"
+                    && m.content.contains("reply from a") {
+                    replies += 1;
+                }
+            }
+        }
+        assert_eq!(inbounds, 4, "no turn was dropped by a rollover");
+        assert_eq!(replies, 4, "no reply was dropped by a rollover");
         rt.shutdown();
     }
 

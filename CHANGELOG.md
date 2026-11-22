@@ -5,6 +5,66 @@ follow semantic versioning. Documentation, this changelog and migration
 notes are release gates under the [release policy](docs/user/release-policy.md),
 not follow-ups.
 
+## [Unreleased]
+
+### Added
+
+- **Automatic session rollover (mandate 9.4)**: one logical
+  conversation now spans multiple session segments.  When a
+  transcript outgrows the agent's policy
+  (`rollover_max_messages` / `rollover_max_tokens` in profile
+  params; defaults 200 messages / 24 576 estimated tokens) the
+  runtime rolls over BEFORE the next turn instead of silently
+  dropping the oldest history: the prior segment stays intact with
+  a closing note, the next segment opens with a structured
+  continuity summary (pinned instructions and unresolved
+  requirements preserved verbatim, decisions, references and
+  artifacts carried over, recent tail), and both are inspectable in
+  the desktop's session combo (`segment_of` chains the lineage).
+  `restore_segment` resumes the logical conversation from an
+  earlier segment - history is append-only, so restoring branches a
+  new segment seeded from the earlier one instead of rewriting it.
+- **MCP client, stdio transport (mandate 13.2)**: configured Model
+  Context Protocol servers run as child processes speaking
+  newline-delimited JSON-RPC 2.0 - initialize handshake,
+  tools/resources/prompts listing, tools/call with isError
+  handling, 5 s/10 s timeouts, respawn after a server crash
+  (audited).  Security posture: connection requires explicit user
+  enablement (imported configs stay disabled - approval BEFORE
+  connection), per-server tool allowlists fail closed, per-agent
+  grants use `mcp:<server>` (whole server) or
+  `mcp:<server>:<tool>` through the same broker (ask-modes route
+  through the approval gate), every result is labelled UNTRUSTED
+  content, and connect/restart/call outcomes are audited.  Not yet:
+  Streamable HTTP transport and dynamic tool-schema injection into
+  model turns.
+
+## [0.4.0] - 2026-11-21
+
+### Added
+
+- **The Rust product engine** (`rust/crates/las-core`): the
+  agent-first domain - persistent agents with versioned profiles,
+  sessions and canonical transcripts, durable versioned memory,
+  inboxes with delivery states and idempotency, channels and a
+  shared blackboard, default-deny agent-to-agent topology, the full
+  communication set (messages, calls, delegation with cycle/depth
+  protection, control transfer), a tokio actor runtime with
+  per-session turn locks and restart recovery, a fair shared
+  inference scheduler, token-budgeted context assembly with memory
+  and reply routing, a permission broker with workspace-jail file
+  tools, hardened web fetch (SSRF resolved-IP checks, per-hop
+  re-validated redirects, MIME gate), the TOOL_CALL loop with the
+  ask-once/ask-each approval gate, and SQLite WAL storage that
+  reads the Python engine's event-log database alongside.
+- **The egui desktop shell** (`rust/crates/las-desktop`): the
+  mandate's fourteen navigation areas, all live on real las-core
+  data, verified headlessly with egui_kittest.
+- **Packaging**: `.deb` and AppImage built and structurally
+  verified by `scripts/make_deb.py` / `scripts/make_appimage.py`;
+  versions unified at 0.4.0; CI gates the Python matrix and the
+  full Rust workspace (tests + release build).
+
 ## [0.3.0] - 2026-11-21
 
 ### Added

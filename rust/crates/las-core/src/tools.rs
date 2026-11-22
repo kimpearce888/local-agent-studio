@@ -148,6 +148,12 @@ impl ToolOutcome {
 pub struct Broker {
     jail_root: PathBuf,
     grants: Vec<ToolGrant>,
+    /// The MCP registry, when MCP servers are configured (mandate
+    /// 13.2).  `None` = MCP not configured; mcp:* calls deny
+    /// honestly instead of pretending.
+    mcp: Option<crate::mcp::McpClients>,
+    /// The agent this broker serves (audit attribution for MCP).
+    agent_id: String,
     /// Tools with an approved one-shot (AskEach) pass: consumed
     /// once, then the tool defers again.
     one_shot: Vec<String>,
@@ -172,7 +178,18 @@ impl Broker {
             .unwrap_or(jail_root);
         Self { jail_root, grants, one_shot: Vec::new(),
                web_domains: Vec::new(),
-               allow_private_fetch: false }
+               allow_private_fetch: false,
+               mcp: None, agent_id: String::new() }
+    }
+
+    /// Attach the MCP registry (mandate 13.2): `mcp:<server>:<tool>`
+    /// calls route through the same grant machinery as built-in
+    /// tools - exact or server-level grants apply.
+    pub fn with_mcp(mut self, clients: crate::mcp::McpClients,
+                    agent_id: impl Into<String>) -> Self {
+        self.mcp = Some(clients);
+        self.agent_id = agent_id.into();
+        self
     }
 
     /// Tools approved for a single use (AskEach approvals).
@@ -214,9 +231,24 @@ impl Broker {
 
     /// Authorization in the spec 5.9 order.
     pub fn authorize(&self, call: &ToolCall) -> Decision {
-        // (1) allowlist: explicit grants only, mode-aware.
+        // (1) allowlist: explicit grants only, mode-aware.  MCP
+        // tools match either the exact wire name
+        // (`mcp:docs:search`) or the server-level grant
+        // (`mcp:docs`), so one grant can cover a whole server.
+        let grant_name = match crate::mcp::parse_mcp_tool(
+            &call.tool) {
+            Some((server, _)) => {
+                let server_grant = format!("mcp:{server}");
+                if self.grants.iter().any(|g| g.tool == call.tool) {
+                    call.tool.clone()
+                } else {
+                    server_grant
+                }
+            }
+            None => call.tool.clone(),
+        };
         let Some(grant) = self.grants.iter().find(
-            |g| g.tool == call.tool) else {
+            |g| g.tool == grant_name) else {
             return Decision::Deny("tool not granted to this agent");
         };
         match grant.mode {
@@ -225,7 +257,8 @@ impl Broker {
                     "grant mode for this tool is never");
             }
             GrantMode::AskOnce | GrantMode::AskEach => {
-                if self.one_shot.iter().any(|t| *t == call.tool) {
+                if self.one_shot.iter().any(|t|
+                    *t == call.tool || *t == grant_name) {
                     // Approved for exactly this use.
                 } else {
                     return Decision::Ask(
@@ -280,6 +313,17 @@ impl Broker {
                 }) {
                     return Decision::Deny(
                         "host is not in the agent's domain allowlist");
+                }
+            }
+            t if t.starts_with("mcp:") => {
+                if crate::mcp::parse_mcp_tool(t).is_none() {
+                    return Decision::Deny(
+                        "malformed MCP tool id; use \
+                         mcp:<server>:<tool>");
+                }
+                if !call.args.is_object() {
+                    return Decision::Deny(
+                        "args must be an object for MCP tools");
                 }
             }
             other => {
@@ -337,7 +381,11 @@ impl Broker {
                     "deferred: {reason} (an approval request was \
                      recorded; approve it on the Tools screen)"))
             }
-            Decision::Allow => match call.tool.as_str() {
+            Decision::Allow => {
+                if call.tool.starts_with("mcp:") {
+                    return self.mcp_call(call);
+                }
+                match call.tool.as_str() {
                 "read_file" => self.read_file(
                     call.args["path"].as_str().unwrap()),
                 "write_file" => self.write_file(
@@ -348,7 +396,30 @@ impl Broker {
                 "web_fetch" => self.web_fetch(
                     call.args["url"].as_str().unwrap()),
                 _ => unreachable!("authorize filters vocabulary"),
+                }
+            }
+        }
+    }
+
+    /// One MCP tool call: the server's own allowlist and the
+    /// untrusted-content label are applied inside the registry.
+    fn mcp_call(&self, call: &ToolCall) -> ToolOutcome {
+        let Some(mcp) = self.mcp.as_ref() else {
+            return ToolOutcome::err(
+                "denied: MCP is not configured".into());
+        };
+        let Some((server, tool)) =
+            crate::mcp::parse_mcp_tool(&call.tool) else {
+            return ToolOutcome::err(
+                "denied: malformed MCP tool id".into());
+        };
+        match mcp.call(&self.agent_id, server, tool, &call.args) {
+            Ok(text) => ToolOutcome {
+                ok: true, output: text,
+                detail: serde_json::json!({
+                    "server": server, "tool": tool}),
             },
+            Err(e) => ToolOutcome::err(format!("mcp: {e}")),
         }
     }
 

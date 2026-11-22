@@ -182,3 +182,32 @@ In this sandbox the window cannot open (no X11 libraries); the UI is
 verified headlessly with egui_kittest - the same draw code that runs
 on screen, asserted against the real store (see
 `rust/crates/las-desktop/tests/ui.rs`).
+
+### Sessions, rollover segments and the MCP client
+
+An agent's conversation is one logical thread that may span several
+session SEGMENTS.  When a transcript outgrows the agent's policy
+(`rollover_max_messages` / `rollover_max_tokens` in the profile
+params; defaults keep a long margin below the context budget), the
+runtime rolls over BEFORE the next turn: the prior segment stays
+complete and readable (its last row is the closing note), and the
+next segment opens with a structured continuity summary - pinned
+instructions and unresolved requirements verbatim, decisions,
+references and artifacts, and the recent tail.  The Agents screen's
+session combo lists every segment with its status (`open`,
+`rolled_over`, `closed`), so prior segments are inspectable;
+resuming from an earlier one branches a NEW segment seeded from it
+(history is append-only and never rewritten).
+
+MCP (Model Context Protocol) servers extend an agent's tools.  A
+server is configured with a command line and an id; it stays
+DISABLED until you approve the connection (an imported config never
+implies approval).  Once approved, the agent can call its tools
+under grants `mcp:<server>` (the whole server) or
+`mcp:<server>:<tool>`, through the same broker and approval gate as
+the built-in tools, subject to the server's own fail-closed
+`allow_tools` list.  Tool results are always labelled UNTRUSTED
+content with the origin server named, and connections, restarts and
+calls are audited like every other tool decision.  The transport is
+stdio (a local child process speaking JSON-RPC); Streamable HTTP
+for remote servers is not implemented yet.

@@ -197,6 +197,12 @@ CREATE TABLE IF NOT EXISTS tool_events (
     decision TEXT NOT NULL,
     detail_json TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY,
+    config_json TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS blackboard (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     item_type TEXT NOT NULL,               -- note | finding | task | question | decision | artifact
@@ -678,6 +684,46 @@ impl CoreStore {
         conn.query_row("PRAGMA quick_check", [], |r| r.get(0))
     }
 
+    // -- MCP server configs (mandate 13.2) --------------------------------
+    //
+    // Raw-JSON storage: the typed `McpServerConfig` lives in
+    // `mcp.rs`; `enabled` is the user's connection approval and is
+    // stored SEPARATELY from the config so an imported/re-enabled
+    // config can never imply approval.
+
+    pub fn upsert_mcp_server(&self, id: &str, config_json: &str,
+                             enabled: bool)
+                             -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO mcp_servers (id, config_json, enabled, \
+             created_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET config_json=?2, \
+             enabled=?3",
+            params![id, config_json, enabled as i64, utc_now()])
+            .map(|_| ())
+    }
+
+    pub fn delete_mcp_server(&self, id: &str)
+                             -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM mcp_servers WHERE id=?1",
+                     params![id])
+    }
+
+    /// (id, config_json, enabled) for every configured server.
+    pub fn list_mcp_server_rows(&self)
+        -> rusqlite::Result<Vec<(String, String, bool)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, config_json, enabled FROM mcp_servers \
+             ORDER BY id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? != 0))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Append one tool-broker decision (spec 5.9: every call is
     /// audited as tool.called or tool.denied).
     pub fn log_tool_event(&self, agent_id: &str, tool: &str,
@@ -807,6 +853,16 @@ impl CoreStore {
         let rows = stmt.query_map(params![agent_id], session_from_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Transition a session's status (open | rolled_over |
+    /// closed).  Rollover/restore use this; the row itself stays.
+    pub fn update_session_status(&self, id: &str, status: &str)
+                                 -> rusqlite::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE agent_sessions SET status=?2 WHERE id=?1",
+            params![id, status])
     }
 
     /// Append atomically: seq is ALLOCATED BY SQL (max+1), never

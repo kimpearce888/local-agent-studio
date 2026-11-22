@@ -3,9 +3,11 @@
 pub mod agents;
 pub mod communication;
 pub mod context;
+pub mod mcp;
 pub mod migration;
 pub mod providers;
 pub mod runtime;
+pub mod sessions;
 pub mod scheduler;
 pub mod storage;
 pub mod tools;
