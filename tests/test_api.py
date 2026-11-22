@@ -136,13 +136,17 @@ class TestRuns(ApiTestBase):
             if state.get("status") != "succeeded":
                 # Budget expired: dump where EVERY thread is stuck so
                 # the next CI flake diagnoses itself instead of
-                # showing a bare 'running != succeeded' (run 33).
-                import faulthandler, io
-                dump = io.StringIO()
-                faulthandler.dump_traceback(file=dump)
+                # showing a bare 'running != succeeded' (runs 33/35).
+                # faulthandler needs a real file descriptor, so a
+                # temp file - NOT StringIO (run 35: fileno error).
+                import faulthandler, tempfile
+                with tempfile.TemporaryFile(mode="w+") as fh:
+                    faulthandler.dump_traceback(file=fh)
+                    fh.seek(0)
+                    dump_text = fh.read()
                 self.fail(
                     f"run did not succeed in 60s; state={state}\n"
-                    f"--- thread dump at failure ---\n{dump.getvalue()}")
+                    f"--- thread dump at failure ---\n{dump_text}")
             self.assertEqual(state["status"], "succeeded", state)
             status, body = self.call(f"/runs/{run_id}/events")
             self.assertGreater(len(body["events"]), 5)
