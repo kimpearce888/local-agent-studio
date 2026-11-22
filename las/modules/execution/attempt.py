@@ -30,7 +30,9 @@ def run_attempt(d, task: Task, attempt_no: int, temperature: float) -> AttemptOu
     limits = task.limits or {}
     max_turns = int(limits.get("max_turns", DEFAULTS["max_turns"]))
     max_tool_calls = int(limits.get("max_tool_calls", DEFAULTS["max_tool_calls"]))
-    timeout = float(limits.get("timeout_seconds", DEFAULTS["wall_task_seconds"]))
+    # The attempt wall: the task's own limit, else the run's configured
+    # wall (DriverConfig.wall_task_seconds - real backends need more).
+    timeout = float(limits.get("timeout_seconds", d.config.wall_task_seconds))
     max_output = int((task.params or {}).get("max_tokens", DEFAULTS["max_output_tokens"]))
     attempt_id = f"att{attempt_no:03d}-{secrets.token_hex(3)}"
 

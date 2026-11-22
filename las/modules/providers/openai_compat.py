@@ -38,10 +38,14 @@ def resolve_api_key(auth_env: str) -> Optional[str]:
 class HttpCore:
     """Shared HTTP plumbing with normalized errors (spec 7.1)."""
 
-    def __init__(self, base_url: str, api_key: Optional[str], timeout: float = 60.0,
+    def __init__(self, base_url: str, api_key: Optional[str], timeout: float = 300.0,
                  extra_headers: Optional[dict] = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
+        # The socket timeout must cover a FULL generation on buffered
+        # backends (the z-ai proxy waits for the model's entire reply
+        # before the first byte; measured 300-600s for big contexts) -
+        # 60s killed real runs with task code TIMEOUT.
         self.timeout = timeout
         self.extra_headers = extra_headers or {}
         self._open_streams: dict[str, object] = {}
@@ -171,7 +175,7 @@ class ChatCompletionsAdapter(Adapter):
     """Maps the internal model to ``POST /v1/chat/completions``."""
 
     def __init__(self, provider_id: str, base_url: str, api_key: Optional[str] = None,
-                 preset: str | Preset = "generic", timeout: float = 60.0,
+                 preset: str | Preset = "generic", timeout: float = 300.0,
                  extra_headers: Optional[dict] = None):
         self.provider_id = provider_id
         self.preset = PRESETS[preset] if isinstance(preset, str) else preset
@@ -349,7 +353,7 @@ class ResponsesAdapter(Adapter):
     """
 
     def __init__(self, provider_id: str, base_url: str, api_key: Optional[str] = None,
-                 preset: str | Preset = "generic", timeout: float = 60.0,
+                 preset: str | Preset = "generic", timeout: float = 300.0,
                  extra_headers: Optional[dict] = None):
         self.provider_id = provider_id
         self.preset = PRESETS[preset] if isinstance(preset, str) else preset

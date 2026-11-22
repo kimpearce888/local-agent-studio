@@ -56,8 +56,11 @@ def _run_real(args, data_dir: str) -> int:
         print("server not reachable/authenticated; aborting")
         return 2
 
-    goals = build_corpus(min(args.goals, 100))
-    print(f"corpus: {len(goals)} goals against the live model "
+    full = build_corpus(min(args.goals, 100))
+    end = args.end if args.end is not None else len(full)
+    goals = full[max(0, args.start):max(0, end)]
+    print(f"corpus: {len(goals)} goals (indices {args.start}:{end}) "
+          f"against the live model "
           f"(this measures the MODEL, not the harness)")
     t0 = time.monotonic()
     corpus = run_corpus_real(
@@ -158,6 +161,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="bench")
     parser.add_argument("--goals", type=int, default=100,
                         help="corpus size (max 100)")
+    parser.add_argument("--start", type=int, default=0,
+                        help="first corpus index (for sliced/parallel runs)")
+    parser.add_argument("--end", type=int, default=None,
+                        help="corpus slice end (exclusive); default: goals")
     parser.add_argument("--kills", type=int, default=200,
                         help="forced-kill/resume cycles (real runs cap at 5)")
     parser.add_argument("--seed", type=int, default=20261121)
@@ -172,8 +179,10 @@ def main(argv=None) -> int:
                         help="override the preset's base URL")
     parser.add_argument("--model", default=None,
                         help="model id on the live server")
-    parser.add_argument("--timeout", type=float, default=300.0,
-                        help="per-request timeout for live calls")
+    parser.add_argument("--timeout", type=float, default=900.0,
+                        help="per-request timeout for live calls (a "
+                             "buffered backend must finish the ENTIRE "
+                             "generation inside it)")
     args = parser.parse_args(argv)
 
     if args.provider != "mock":

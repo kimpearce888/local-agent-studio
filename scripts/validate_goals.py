@@ -23,7 +23,7 @@ def main() -> int:
     ap.add_argument("--provider", default="zai")
     ap.add_argument("--model", default="glm-4-plus")
     ap.add_argument("--base-url", default=None)
-    ap.add_argument("--timeout", type=float, default=300.0)
+    ap.add_argument("--timeout", type=float, default=900.0)
     args = ap.parse_args()
 
     preset = args.provider

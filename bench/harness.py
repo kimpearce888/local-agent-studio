@@ -151,7 +151,8 @@ def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
         driver = engine.driver(run_id, registry,
                                {"default": (provider_id, model)},
                                DriverConfig(failure_policy="stop",
-                                            tool_calling=tool_calling))
+                                            tool_calling=tool_calling,
+                                            wall_task_seconds=3600))
         if kills:
             steps = rng.randint(1, max(1, len(plan.tasks) - 1))
             for _ in range(steps):
@@ -162,7 +163,8 @@ def run_worker_real(data_dir: str, goals, adapter, provider_id: str,
                           {"default": (provider_id, model)},
                           DriverConfig(
                               failure_policy="stop",
-                              tool_calling=tool_calling)).run()
+                              tool_calling=tool_calling,
+                              wall_task_seconds=3600)).run()
             state = engine.state(run_id)
             if state.status == "succeeded":
                 metrics["runs_succeeded"] += 1
@@ -215,7 +217,13 @@ def _real_driver(engine: Engine, run_id: str, provider_id: str,
     registry = ProviderRegistry()
     registry.register(provider_id, adapter)
     cfg = config or DriverConfig(failure_policy="stop",
-                                 tool_calling=tool_calling)
+                                 tool_calling=tool_calling,
+                                 # Real multi-turn file work through a
+                                 # buffered backend: one turn is one
+                                 # full generation (300-600s measured),
+                                 # so the mock-speed task wall of 30
+                                 # minutes is not enough.
+                                 wall_task_seconds=3600)
     return engine.driver(run_id, registry,
                          {"default": (provider_id, model)}, cfg)
 

@@ -58,6 +58,12 @@ class DriverConfig:
     cap_wall_minutes_run: int = DEFAULTS["cap_wall_minutes_run"]
     stall_timeout: float = DEFAULTS["stall_timeout"]
     context_length: int = DEFAULTS["context_length"]
+    # Per-task attempt wall (spec 5.8), configurable per run: real
+    # multi-turn file work through a buffered non-streaming backend
+    # (the z-ai proxy: one HTTP request covers the model's ENTIRE
+    # generation, measured 300-600s per turn) needs far more than the
+    # mock-speed default.
+    wall_task_seconds: int = DEFAULTS["wall_task_seconds"]
     tool_calling: bool = True              # capability: native tool calls
     enable_shell: bool = False
     enable_web: bool = False
@@ -79,6 +85,7 @@ class DriverConfig:
             "cap_wall_minutes_run": self.cap_wall_minutes_run,
             "stall_timeout": self.stall_timeout,
             "context_length": self.context_length,
+            "wall_task_seconds": self.wall_task_seconds,
             "enable_shell": self.enable_shell,
             "enable_web": self.enable_web,
             "command_allowlist": list(self.command_allowlist),
