@@ -129,9 +129,12 @@ impl Actor {
                    -> crate::tools::Broker {
         let agent = self.store.agent(&self.agent_id)
             .map(|a| a.profile).ok();
-        let grants: Vec<String> = agent.as_ref()
-            .and_then(|p| serde_json::from_str(&p.tool_grants_json)
-                      .ok())
+        let grants: Vec<crate::tools::ToolGrant> = agent.as_ref()
+            .map(|p| crate::tools::parse_grants(
+                &p.tool_grants_json))
+            .unwrap_or_default();
+        let one_shot: Vec<String> = self.store
+            .one_shot_grants(&self.agent_id)
             .unwrap_or_default();
         let params: serde_json::Value = agent.as_ref()
             .and_then(|p| serde_json::from_str(&p.params_json).ok())
@@ -150,6 +153,7 @@ impl Actor {
             });
         let _ = std::fs::create_dir_all(&jail);
         crate::tools::Broker::new(jail, grants)
+            .with_one_shot(one_shot)
             .with_web_domains(domains)
     }
 
@@ -250,13 +254,33 @@ impl Actor {
                     continue;
                 }
                 calls_used += 1;
+                // A granted-but-ask-mode call is DEFERRED: record
+                // the approval request so the Tools screen can
+                // surface it, audit the deferral, tell the model.
+                let ask = matches!(
+                    broker.authorize(call),
+                    crate::tools::Decision::Ask(_));
+                if ask {
+                    let _ = self.store.request_tool_approval(
+                        &self.agent_id, &call.tool,
+                        &call.args.to_string());
+                }
                 let outcome = broker.execute(call);
-                let decision = if outcome.ok
-                    && !outcome.output.starts_with("denied:") {
+                let deferred = outcome.output.starts_with(
+                    "deferred:");
+                let ran_ok = outcome.ok && !deferred;
+                let decision = if ran_ok {
                     "tool.called"
                 } else {
                     "tool.denied"
                 };
+                if ran_ok {
+                    // A one-shot approval paid for exactly this
+                    // execution; consume it so the next use defers
+                    // again.
+                    let _ = self.store.consume_one_shot_grant(
+                        &self.agent_id, &call.tool);
+                }
                 let detail = serde_json::json!({
                     "tool": call.tool, "args": call.args,
                     "ok": outcome.ok}).to_string();
@@ -504,6 +528,132 @@ mod tests {
         assert_eq!(audit.len(), 1);
         assert_eq!(audit[0].1, "write_file");
         assert_eq!(audit[0].2, "tool.called");
+        rt.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ask_once_tool_defers_then_runs_after_approval() {
+        let dir = std::env::temp_dir().join(format!(
+            "las-askonce-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(
+            CoreStore::open(dir.join("t.db")).unwrap());
+        store.create_agent("a", "A", "", &spec("a")).unwrap();
+        // The grant is ask_once: granted, but gated.
+        store.set_tool_grants("a",
+            r#"[{"tool":"read_file","mode":"ask_once"}]"#).unwrap();
+        // A real file in the workspace jail.
+        let ws = dir.join("workspaces").join("a");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("note.md"), "content").unwrap();
+        // Even TOOL_CALL turns, odd turns answer.
+        let round = std::sync::atomic::AtomicUsize::new(0);
+        let responder: AsyncResponder = Arc::new(
+            move |_e: &crate::storage::InboxRow| {
+                let n = round.fetch_add(
+                    1, std::sync::atomic::Ordering::SeqCst);
+                let text = if n % 2 == 0 {
+                    "TOOL_CALL {\"tool\": \"read_file\", \
+                     \"args\": {\"path\": \"note.md\"}}"
+                        .to_string()
+                } else {
+                    "done".to_string()
+                };
+                Box::pin(async move { text })
+            });
+        let rt = AgentRuntime::new(store.clone(), responder);
+        // Turn 1: the call is DEFERRED, not executed.
+        let entry = store.send_message(
+            "user", "a", "read it", "", BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+        let audit = store.tool_events("a").unwrap();
+        assert_eq!(audit[0].2, "tool.denied");
+        let t = store.transcript("a-s-main").unwrap();
+        assert!(t.iter().any(|m| m.role == "tool"
+            && m.content.contains("deferred:")),
+            "the model SEES the deferral");
+        let pending = store.pending_approvals().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].2, "read_file");
+        // The user approves on the Tools screen path.
+        store.approve_tool_request(pending[0].0).unwrap();
+        // The ask_once grant became always.
+        let profile = store.agent("a").unwrap().profile;
+        assert!(profile.tool_grants_json.contains(
+            "\"mode\":\"always\""),
+            "upgraded: {}", profile.tool_grants_json);
+        // Turn 2: the same call now runs for real.
+        let entry = store.send_message(
+            "user", "a", "again", "", BusyMode::Wait).unwrap();
+        rt.deliver(&entry).await.unwrap();
+        let audit = store.tool_events("a").unwrap();
+        assert_eq!(audit[1].2, "tool.called",
+                   "the approved call executed");
+        let t = store.transcript("a-s-main").unwrap();
+        assert!(t.iter().any(|m| m.role == "tool"
+            && m.content.contains("content")),
+            "the file content came back");
+        assert!(store.pending_approvals().unwrap().is_empty());
+        rt.shutdown();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ask_each_grant_pays_for_exactly_one_use() {
+        let dir = std::env::temp_dir().join(format!(
+            "las-askche-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(
+            CoreStore::open(dir.join("t.db")).unwrap());
+        store.create_agent("a", "A", "", &spec("a")).unwrap();
+        store.set_tool_grants("a",
+            r#"[{"tool":"read_file","mode":"ask_each"}]"#).unwrap();
+        let ws = dir.join("workspaces").join("a");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("note.md"), "x").unwrap();
+        let round = std::sync::atomic::AtomicUsize::new(0);
+        let responder: AsyncResponder = Arc::new(
+            move |_e: &crate::storage::InboxRow| {
+                let n = round.fetch_add(
+                    1, std::sync::atomic::Ordering::SeqCst);
+                let text = if n % 2 == 0 {
+                    "TOOL_CALL {\"tool\": \"read_file\", \
+                     \"args\": {\"path\": \"note.md\"}}"
+                        .to_string()
+                } else {
+                    "done".to_string()
+                };
+                Box::pin(async move { text })
+            });
+        let rt = AgentRuntime::new(store.clone(), responder);
+        // Turn 1: deferred, request recorded.
+        let e = store.send_message(
+            "user", "a", "go", "", BusyMode::Wait).unwrap();
+        rt.deliver(&e).await.unwrap();
+        let pending = store.pending_approvals().unwrap();
+        assert_eq!(pending.len(), 1);
+        store.approve_tool_request(pending[0].0).unwrap();
+        assert_eq!(store.one_shot_grants("a").unwrap(),
+                   vec!["read_file".to_string()]);
+        // Turn 2: the one-shot runs and is consumed.
+        let e = store.send_message(
+            "user", "a", "again", "", BusyMode::Wait).unwrap();
+        rt.deliver(&e).await.unwrap();
+        let audit = store.tool_events("a").unwrap();
+        assert_eq!(audit[1].2, "tool.called");
+        assert!(store.one_shot_grants("a").unwrap().is_empty(),
+                "the one-shot was consumed by the real execution");
+        // Turn 3: the same call defers again - ask EACH means
+        // every use needs its own approval.
+        let e = store.send_message(
+            "user", "a", "once more", "", BusyMode::Wait).unwrap();
+        rt.deliver(&e).await.unwrap();
+        let audit = store.tool_events("a").unwrap();
+        assert_eq!(audit[2].2, "tool.denied");
+        assert_eq!(store.pending_approvals().unwrap().len(), 1);
         rt.shutdown();
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -139,6 +139,44 @@ CREATE TABLE IF NOT EXISTS comm_rules (
     may_delegate INTEGER NOT NULL DEFAULT 1,
     PRIMARY KEY (src, dst)
 );
+CREATE TABLE IF NOT EXISTS pending_approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    args_json TEXT NOT NULL DEFAULT '{}',
+    requested_at TEXT NOT NULL,
+    resolved_at TEXT,
+    resolution TEXT
+);
+CREATE TABLE IF NOT EXISTS one_shot_grants (
+    agent_id TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, tool)
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    instructions TEXT NOT NULL DEFAULT '',
+    from_agent TEXT NOT NULL,
+    to_agent TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    goal TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS plan_steps (
+    plan_id TEXT NOT NULL REFERENCES plans(id),
+    idx INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    instructions TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (plan_id, idx)
+);
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -389,6 +427,255 @@ impl CoreStore {
             rusqlite::params![project_id], |r| r.get(0))?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Overwrite an agent's tool grants (the approval gate
+    /// upgrades ask_once to always when the user approves).
+    pub fn set_tool_grants(&self, agent_id: &str,
+                           grants_json: &str)
+                           -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // The live profile is the agent's current profile version.
+        conn.execute(
+            "UPDATE agent_profile_versions SET tool_grants_json=? \
+             WHERE agent_id=? AND version=(SELECT \
+             current_profile_version FROM agents WHERE id=?)",
+            rusqlite::params![grants_json, agent_id, agent_id])?;
+        Ok(())
+    }
+
+    /// Record an approval request; idempotent per unresolved
+    /// (agent, tool, args): returns the existing row's id.
+    pub fn request_tool_approval(&self, agent_id: &str,
+                                 tool: &str, args_json: &str)
+                                 -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let existing: Option<i64> = conn.query_row(
+            "SELECT id FROM pending_approvals WHERE agent_id=? AND \
+             tool=? AND args_json=? AND resolved_at IS NULL",
+            rusqlite::params![agent_id, tool, args_json],
+            |r| r.get(0)).ok();
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        conn.execute(
+            "INSERT INTO pending_approvals (agent_id, tool, \
+             args_json, requested_at) VALUES (?,?,?,?)",
+            rusqlite::params![agent_id, tool, args_json,
+                              utc_now()])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Unresolved approval requests, oldest first: (id, agent,
+    /// tool, args, requested_at).
+    pub fn pending_approvals(&self) -> rusqlite::Result<Vec<(i64,
+        String, String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, agent_id, tool, args_json, requested_at \
+             FROM pending_approvals WHERE resolved_at IS NULL \
+             ORDER BY id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+                r.get(4)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Resolve a request ('approved' or 'denied').
+    pub fn resolve_tool_approval(&self, id: i64,
+                                 resolution: &str)
+                                 -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE pending_approvals SET resolved_at=?, \
+             resolution=? WHERE id=? AND resolved_at IS NULL",
+            rusqlite::params![utc_now(), resolution, id])?;
+        Ok(())
+    }
+
+    /// Approve a pending request and apply its effect (spec 5.9
+    /// grant modes): ask_once upgrades the grant to always;
+    /// ask_each grants exactly one more use.  Returns the agent
+    /// and tool the request belonged to.
+    pub fn approve_tool_request(&self, id: i64)
+        -> rusqlite::Result<(String, String)> {
+        let pending: Option<(String, String)> = {
+            let conn = self.conn.lock().unwrap();
+            conn.query_row(
+                "SELECT agent_id, tool FROM pending_approvals \
+                 WHERE id=? AND resolved_at IS NULL",
+                rusqlite::params![id],
+                |r| Ok((r.get(0)?, r.get(1)?))).ok()
+        };
+        let Some((agent, tool)) = pending else {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        };
+        self.resolve_tool_approval(id, "approved")?;
+        // Read the agent's CURRENT grants, upgrade the one tool.
+        let grants_json = self.agent(&agent)
+            .map(|a| a.profile.tool_grants_json)
+            .unwrap_or_default();
+        let mut grants = crate::tools::parse_grants(&grants_json);
+        if let Some(g) = grants.iter_mut()
+            .find(|g| g.tool == tool) {
+            match g.mode {
+                crate::tools::GrantMode::AskOnce => {
+                    g.mode = crate::tools::GrantMode::Always;
+                    self.set_tool_grants(
+                        &agent, &crate::tools::grants_to_json(
+                            &grants))?;
+                }
+                crate::tools::GrantMode::AskEach => {
+                    self.add_one_shot_grant(&agent, &tool)?;
+                }
+                _ => {}   // already always/never: nothing to add
+            }
+        }
+        Ok((agent, tool))
+    }
+
+    /// The agent's approved one-shot tools (AskEach approvals).
+    pub fn one_shot_grants(&self, agent_id: &str)
+                           -> rusqlite::Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT tool FROM one_shot_grants WHERE agent_id=?")?;
+        let rows = stmt.query_map(
+            rusqlite::params![agent_id], |r| r.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Grant a one-shot use (AskEach approval).
+    pub fn add_one_shot_grant(&self, agent_id: &str, tool: &str)
+                              -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO one_shot_grants (agent_id, \
+             tool, created_at) VALUES (?,?,?)",
+            rusqlite::params![agent_id, tool, utc_now()])?;
+        Ok(())
+    }
+
+    /// Consume a one-shot after the tool actually ran.
+    pub fn consume_one_shot_grant(&self, agent_id: &str,
+                                  tool: &str)
+                                  -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM one_shot_grants WHERE agent_id=? AND \
+             tool=?",
+            rusqlite::params![agent_id, tool])?;
+        Ok(())
+    }
+
+    /// Create a task and return its row id.
+    pub fn create_task(&self, title: &str, instructions: &str,
+                       from_agent: &str, to_agent: &str)
+                       -> rusqlite::Result<i64> {
+        let now = utc_now();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO tasks (title, instructions, from_agent, \
+             to_agent, status, created_at, updated_at) VALUES \
+             (?,?,?,?,?,?,?)",
+            rusqlite::params![title, instructions, from_agent,
+                              to_agent, "open", now, now])?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// All tasks, oldest first: (id, title, instructions, from,
+    /// to, status, created_at).
+    pub fn list_tasks(&self) -> rusqlite::Result<Vec<(i64, String,
+        String, String, String, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, instructions, from_agent, to_agent, \
+             status, created_at FROM tasks ORDER BY id")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?,
+                r.get(4)?, r.get(5)?, r.get(6)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Move a task to a terminal or reopened state.
+    pub fn set_task_status(&self, id: i64, status: &str)
+                           -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE tasks SET status=?, updated_at=? WHERE id=?",
+            rusqlite::params![status, utc_now(), id])?;
+        Ok(())
+    }
+
+    /// Create a plan (id chosen by the caller, e.g. a slug).
+    pub fn create_plan(&self, id: &str, title: &str, goal: &str)
+                       -> rusqlite::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO plans (id, title, goal, created_at) \
+             VALUES (?,?,?,?)",
+            rusqlite::params![id, title, goal, utc_now()])?;
+        Ok(())
+    }
+
+    /// Append a step to a plan at the next index.
+    pub fn add_plan_step(&self, plan_id: &str, title: &str,
+                         instructions: &str)
+                         -> rusqlite::Result<i64> {
+        let conn = self.conn.lock().unwrap();
+        let next: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(idx)+1, 0) FROM plan_steps WHERE \
+             plan_id=?", rusqlite::params![plan_id], |r| r.get(0))?;
+        conn.execute(
+            "INSERT INTO plan_steps (plan_id, idx, title, \
+             instructions) VALUES (?,?,?,?)",
+            rusqlite::params![plan_id, next, title, instructions])?;
+        Ok(next)
+    }
+
+    /// All plans, oldest first: (id, title, goal, created_at).
+    pub fn list_plans(&self) -> rusqlite::Result<Vec<(String, String,
+        String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, goal, created_at FROM plans ORDER BY \
+             created_at")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// The steps of one plan in order.
+    pub fn plan_steps(&self, plan_id: &str)
+        -> rusqlite::Result<Vec<(i64, String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT idx, title, instructions FROM plan_steps WHERE \
+             plan_id=? ORDER BY idx")?;
+        let rows = stmt.query_map(
+            rusqlite::params![plan_id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// One-row, one-column count helper for the diagnostics screen.
+    pub fn count(&self, table: &str) -> rusqlite::Result<i64> {
+        // Only called with literal table names from settings code.
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {table}"), [],
+            |r| r.get(0))
+    }
+
+    /// SQLite integrity verdict for the diagnostics screen.
+    pub fn integrity_check(&self) -> rusqlite::Result<String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("PRAGMA quick_check", [], |r| r.get(0))
     }
 
     /// Append one tool-broker decision (spec 5.9: every call is

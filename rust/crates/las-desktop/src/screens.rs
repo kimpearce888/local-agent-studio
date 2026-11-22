@@ -700,13 +700,45 @@ pub fn tools_screen(ui: &mut egui::Ui, state: &mut AppState) {
         });
     ui.add_space(6.0);
 
-    ui.label("Per-agent grants (edit them on the Agents screen when \
-              creating an agent):");
+    // The approval gate (TLS-2): ask-mode tool calls land here.
+    ui.heading("Pending approvals");
+    let pending = store.pending_approvals().unwrap_or_default();
+    if pending.is_empty() {
+        ui.label("Nothing waiting. Ask-once/ask-each tool calls \
+                  appear here for a decision.");
+    } else {
+        // Vertical groups, not a wide grid: a grid row with the
+        // full args JSON pushes its buttons off narrow viewports
+        // (the UI test caught exactly that).
+        for (id, agent, tool, args, at) in &pending {
+            ui.group(|ui| {
+                ui.label(format!("#{id}  agent {agent}  tool {tool}"));
+                ui.label(format!("args: {args}"));
+                ui.label(format!("requested {at}"));
+                ui.horizontal(|ui| {
+                    if ui.button(format!("approve-{id}"))
+                        .clicked() {
+                            let _ = store.approve_tool_request(*id);
+                        }
+                    if ui.button(format!("deny-{id}")).clicked() {
+                        let _ = store.resolve_tool_approval(
+                            *id, "denied");
+                    }
+                });
+            });
+        }
+    }
+    ui.add_space(8.0);
+
+    ui.label("Per-agent grant modes (click a cell to cycle: off -> \
+              always -> ask once -> ask each -> never):");
     let agents = store.list_agents(true).unwrap_or_default();
-    egui::Grid::new("tool-grants").striped(true).num_columns(5)
+    egui::Grid::new("tool-grants").striped(true)
+        .num_columns(crate::KNOWN_TOOLS.len() + 1)
         .show(ui, |ui| {
+            ui.strong("Agent");
             for tool in crate::KNOWN_TOOLS {
-                ui.strong(tool);
+                ui.strong((*tool).to_string());
             }
             ui.end_row();
             if agents.is_empty() {
@@ -717,22 +749,56 @@ pub fn tools_screen(ui: &mut egui::Ui, state: &mut AppState) {
                 ui.label(&a.name);
                 let profile = store.agent(&a.id)
                     .map(|ag| ag.profile).unwrap();
-                let grants: Vec<String> = serde_json::from_str(
-                    &profile.tool_grants_json).unwrap_or_default();
+                let mut grants = las_core::tools::parse_grants(
+                    &profile.tool_grants_json);
                 for tool in crate::KNOWN_TOOLS {
-                    let holds = grants.iter()
-                        .any(|g| g == tool);
-                    ui.label(if holds { "granted" } else { "-" });
+                    let mode = grants.iter()
+                        .find(|g| g.tool == *tool)
+                        .map(|g| g.mode);
+                    let label = match mode {
+                        None => "-".to_string(),
+                        Some(m) => m.as_str().replace('_', " "),
+                    };
+                    if ui.button(format!(
+                        "cycle-{}-{}", a.id, tool)).clicked() {
+                        // off -> always -> ask_once -> ask_each ->
+                        // never -> off (removed).
+                        use las_core::tools::{GrantMode, ToolGrant};
+                        let next = match mode {
+                            None => Some(GrantMode::Always),
+                            Some(GrantMode::Always) =>
+                                Some(GrantMode::AskOnce),
+                            Some(GrantMode::AskOnce) =>
+                                Some(GrantMode::AskEach),
+                            Some(GrantMode::AskEach) =>
+                                Some(GrantMode::Never),
+                            Some(GrantMode::Never) => None,
+                        };
+                        match next {
+                            Some(m) => {
+                                if let Some(g) = grants.iter_mut()
+                                    .find(|g| g.tool == *tool) {
+                                    g.mode = m;
+                                } else {
+                                    grants.push(ToolGrant {
+                                        tool: (*tool).into(),
+                                        mode: m });
+                                }
+                            }
+                            None => {
+                                grants.retain(|g| g.tool != *tool);
+                            }
+                        }
+                        let _ = store.set_tool_grants(
+                            &a.id, &las_core::tools::grants_to_json(
+                                &grants));
+                    }
+                    ui.label(label);
                 }
                 ui.end_row();
             }
         });
-    ui.add_space(6.0);
-    ui.label(
-        "Grants are the authorization model of the tool engine. \
-         Executing granted tools inside a model turn (with the \
-         permission broker and the Rule of Two) is under \
-         construction; nothing on this screen pretends otherwise.");
+    ui.add_space(8.0);
 }
 
 /// Projects & Workspaces (live area 10/14): projects group agents
@@ -818,5 +884,367 @@ pub fn projects_screen(ui: &mut egui::Ui, state: &mut AppState) {
                 });
             }
         });
+    }
+}
+
+/// Artifacts & Files (live area 11/14): browse the REAL files in
+/// each agent's workspace jail - the same tree the tool engine
+/// reads and writes (mandate 10).  Read-only here; writes happen
+/// through tool calls, never through this screen.
+pub fn artifacts_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Artifacts & Files");
+    let store = state.store.clone();
+    ui.label("The workspace jail of one agent, exactly as the tool \\
+              engine sees it. Files are created by tool calls; this \\
+              view is read-only.");
+    ui.add_space(6.0);
+
+    ui.horizontal(|ui| {
+        ui.label("Agent:");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.artifacts_agent).hint_text("agent id"));
+    });
+    ui.add_space(4.0);
+
+    let agent = state.artifacts_agent.trim().to_string();
+    if agent.is_empty() {
+        ui.label("Enter an agent id to browse its workspace.");
+        return;
+    }
+    let Some(dir) = store.data_dir().map(|d| d.join("workspaces")
+                                          .join(&agent)) else {
+        ui.label("No workspace: this store is in-memory.");
+        return;
+    };
+    if !dir.exists() {
+        ui.label(format!(
+            "No workspace yet for '{agent}' (one is created on its \\
+             first granted tool call)."));
+        return;
+    }
+    // Bounded walk, same discipline as list_files in las-core.
+    let mut files: Vec<String> = Vec::new();
+    let mut stack = vec![dir.clone()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let shown = p.strip_prefix(&dir).unwrap_or(&p)
+                .to_string_lossy().into_owned();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                files.push(shown);
+            }
+            if files.len() >= 1000 { break; }
+        }
+        if files.len() >= 1000 { break; }
+    }
+    files.sort();
+    if files.is_empty() {
+        ui.label("Workspace is empty.");
+        return;
+    }
+    egui::Grid::new("artifact-files").striped(true).num_columns(2)
+        .show(ui, |ui| {
+            ui.strong("File"); ui.strong("Size"); ui.end_row();
+            for f in &files {
+                if ui.selectable_label(
+                    state.artifacts_selected == *f, f).clicked() {
+                    state.artifacts_selected = f.clone();
+                }
+                let size = std::fs::metadata(dir.join(f))
+                    .map(|m| m.len()).unwrap_or(0);
+                ui.label(format!("{size} B"));
+                ui.end_row();
+            }
+        });
+    if !state.artifacts_selected.is_empty() {
+        ui.separator();
+        ui.label(format!("Preview: {}", state.artifacts_selected));
+        let path = dir.join(&state.artifacts_selected);
+        // Same 5 MB cap the read_file tool enforces; previews are
+        // further cut at 8 KB so a label can carry them.
+        match std::fs::read(&path) {
+            Ok(bytes) if bytes.len()
+                <= las_core::tools::MAX_WRITE_BYTES => {
+                let mut text = String::from_utf8_lossy(&bytes)
+                    .into_owned();
+                let cap = 8 * 1024;
+                if text.len() > cap {
+                    text.truncate(cap);
+                    text.push_str("\n(preview cut at 8 KB; the \
+                                   file itself is larger)");
+                }
+                ui.label(text);
+            }
+            Ok(_) => {
+                ui.label("File exceeds the 5 MB preview cap.");
+            }
+            Err(e) => {
+                ui.label(format!("read failed: {e}"));
+            }
+        }
+    }
+}
+
+/// Tasks & Delegations (live area 12/14): a task assigned to an
+/// agent is tracked here AND delivered to the agent's real inbox,
+/// so the runtime actually picks it up on its next turn.
+pub fn tasks_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Tasks & Delegations");
+    let store = state.store.clone();
+    ui.label("Creating a task posts it to the agent's inbox - the \\
+              runtime delivers it on the agent's next turn; the \\
+              record here tracks the outcome.");
+    ui.add_space(6.0);
+
+    egui::Grid::new("task-form").num_columns(2).show(ui, |ui| {
+        ui.label("Title");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.task_title).hint_text("what to do"));
+        ui.end_row();
+        ui.label("Instructions");
+        ui.add(egui::TextEdit::multiline(
+            &mut state.task_instructions).hint_text("detail"));
+        ui.end_row();
+        ui.label("Assign to agent");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.task_to).hint_text("agent id"));
+        ui.end_row();
+    });
+    if ui.button("Create task").clicked() {
+        let title = state.task_title.trim().to_string();
+        let to = state.task_to.trim().to_string();
+        if !title.is_empty() && !to.is_empty() {
+            if let Ok(id) = store.create_task(
+                &title, state.task_instructions.trim(),
+                "user", &to) {
+                let text = format!(
+                    "Task #{id}: {title}\n{}",
+                    state.task_instructions.trim());
+                let _ = store.send_message(
+                    "user", &to, &text, "",
+                    las_core::communication::BusyMode::Queue);
+                state.task_title.clear();
+                state.task_instructions.clear();
+            }
+        }
+    }
+    ui.add_space(8.0);
+
+    let tasks = store.list_tasks().unwrap_or_default();
+    if tasks.is_empty() {
+        ui.label("No tasks yet.");
+        return;
+    }
+    egui::Grid::new("tasks").striped(true).num_columns(5).show(
+        ui, |ui| {
+            ui.strong("#"); ui.strong("Title");
+            ui.strong("To"); ui.strong("Status");
+            ui.strong("Actions"); ui.end_row();
+            for (id, title, _instr, _from, to, status, created)
+                in &tasks {
+                ui.label(id.to_string());
+                ui.label(title);
+                ui.label(to);
+                ui.label(format!("{status} ({created})"));
+                ui.horizontal(|ui| {
+                    if ui.button(format!("done-{id}")).clicked() {
+                        let _ = store.set_task_status(
+                            *id, "done");
+                    }
+                    if ui.button(format!("cancel-{id}")).clicked()
+                    {
+                        let _ = store.set_task_status(
+                            *id, "cancelled");
+                    }
+                });
+                ui.end_row();
+            }
+        });
+}
+
+/// Workflow Studio (live area 13/14): edit plans as ordered steps
+/// and export them in plan schema v1 - the exact JSON the Python
+/// engine runs (`python3 -m las run <file>`).
+pub fn workflow_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Workflow Studio");
+    let store = state.store.clone();
+    ui.label("A plan is ordered steps with instructions. Export \\
+              writes plan schema v1 JSON; run it with the engine \\
+              CLI: python3 -m las run <exported-file>");
+    ui.add_space(6.0);
+
+    egui::Grid::new("plan-form").num_columns(2).show(ui, |ui| {
+        ui.label("New plan title");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.plan_title).hint_text("title"));
+        ui.end_row();
+        ui.label("Goal");
+        ui.add(egui::TextEdit::singleline(
+            &mut state.plan_goal).hint_text("one sentence"));
+        ui.end_row();
+    });
+    if ui.button("Create plan").clicked() {
+        let title = state.plan_title.trim().to_string();
+        if !title.is_empty() {
+            let slug: String = title.to_lowercase().chars()
+                .map(|c| if c.is_alphanumeric() { c }
+                      else { '-' }).collect();
+            let slug = slug.trim_matches('-').to_string();
+            if !slug.is_empty() {
+                let _ = store.create_plan(
+                    &slug, &title, state.plan_goal.trim());
+                state.plan_selected = slug.clone();
+                state.plan_title.clear();
+                state.plan_goal.clear();
+            }
+        }
+    }
+    ui.add_space(8.0);
+
+    let plans = store.list_plans().unwrap_or_default();
+    if plans.is_empty() {
+        ui.label("No plans yet.");
+        return;
+    }
+    for (id, title, goal, created) in &plans {
+        let header = format!("{title} ({id}, {created}, {goal})");
+        egui::CollapsingHeader::new(header).default_open(
+            state.plan_selected == *id).show(ui, |ui| {
+            let steps = store.plan_steps(id).unwrap_or_default();
+            ui.label(format!("{} steps", steps.len()));
+            for (idx, stitle, sinstr) in &steps {
+                ui.label(format!(
+                    "  {}. {} - {}", idx + 1, stitle,
+                    if sinstr.is_empty() { "" } else { sinstr }));
+            }
+            if ui.button(format!("add-step-{id}")).clicked() {
+                state.step_edit_plan = id.clone();
+                state.plan_step_title.clear();
+                state.plan_step_instructions.clear();
+            }
+            if state.step_edit_plan == *id {
+                egui::Grid::new("step-form").num_columns(2).show(
+                    ui, |ui| {
+                    ui.label("Step title");
+                    ui.add(egui::TextEdit::singleline(
+                        &mut state.plan_step_title)
+                        .hint_text("step title"));
+                    ui.end_row();
+                    ui.label("Instructions");
+                    ui.add(egui::TextEdit::multiline(
+                        &mut state.plan_step_instructions)
+                        .hint_text("step instructions"));
+                    ui.end_row();
+                });
+                if ui.button(format!("save-step-{id}")).clicked() {
+                    let t = state.plan_step_title.trim().to_string();
+                    if !t.is_empty() {
+                        let _ = store.add_plan_step(
+                            id, &t,
+                            state.plan_step_instructions.trim());
+                        state.plan_step_title.clear();
+                        state.plan_step_instructions.clear();
+                        state.step_edit_plan.clear();
+                    }
+                }
+            }
+            if ui.button(format!("export-{id}")).clicked() {
+                let steps = store.plan_steps(id)
+                    .unwrap_or_default();
+                let tasks: Vec<serde_json::Value> = steps.iter()
+                    .map(|(i, t, instr)| serde_json::json!({
+                        "id": format!("t{}", i + 1),
+                        "type": "task",
+                        "title": t,
+                        "instructions": instr,
+                        "needs": if *i > 0 {
+                            vec![format!("t{}", i)]
+                        } else { vec![] },
+                        "constraints": [],
+                    })).collect();
+                let plan = serde_json::json!({
+                    "schema_version": 1,
+                    "id": id,
+                    "title": title,
+                    "goal": goal,
+                    "created_at": created,
+                    "options": {},
+                    "constraints": [],
+                    "tasks": tasks,
+                });
+                if let Some(dir) = store.data_dir() {
+                    let pdir = dir.join("plans");
+                    let _ = std::fs::create_dir_all(&pdir);
+                    let file = pdir.join(format!("{id}.json"));
+                    let _ = std::fs::write(
+                        &file, plan.to_string());
+                    state.plan_exported = file.to_string_lossy()
+                        .into_owned();
+                }
+            }
+        });
+    }
+    if !state.plan_exported.is_empty() {
+        ui.separator();
+        ui.label(format!("Exported: {}", state.plan_exported));
+    }
+}
+
+/// Settings & Diagnostics (live area 14/14): real facts about this
+/// installation - versions, data location, store integrity, row
+/// counts, configured providers.
+pub fn settings_screen(ui: &mut egui::Ui, state: &mut AppState) {
+    ui.heading("Settings & Diagnostics");
+    let store = state.store.clone();
+    egui::Grid::new("diag").num_columns(2).show(ui, |ui| {
+        ui.strong("Item"); ui.strong("Value"); ui.end_row();
+        ui.label("Desktop version");
+        ui.label(env!("CARGO_PKG_VERSION")); ui.end_row();
+        ui.label("Engine");
+        ui.label(format!(
+            "las-core (SQLite WAL, {})",
+            match store.integrity_check() {
+                Ok(v) => format!("quick_check: {v}"),
+                Err(e) => format!("quick_check failed: {e}"),
+            })); ui.end_row();
+        ui.label("Data directory");
+        ui.label(store.data_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "(in-memory store)".into()));
+        ui.end_row();
+        for (label, table) in [("Agents", "agents"),
+                               ("Messages", "session_messages"),
+                               ("Inbox rows", "inbox"),
+                               ("Tool events", "tool_events"),
+                               ("Projects", "projects"),
+                               ("Tasks", "tasks")] {
+            ui.label(label);
+            ui.label(store.count(table)
+                .map(|n| n.to_string())
+                .unwrap_or_else(|e| format!("error: {e}")));
+            ui.end_row();
+        }
+    });
+    ui.separator();
+    ui.heading("Provider endpoints");
+    let endpoints = store.list_endpoints().unwrap_or_default();
+    if endpoints.is_empty() {
+        ui.label("No provider endpoints configured (see Providers \\
+                  & Models).");
+    } else {
+        egui::Grid::new("endpoints").striped(true).num_columns(3)
+            .show(ui, |ui| {
+                ui.strong("Name"); ui.strong("Base URL");
+                ui.strong("Key env"); ui.end_row();
+                for e in &endpoints {
+                    ui.label(&e.name);
+                    ui.label(&e.base_url);
+                    ui.label(&e.api_key_env);
+                    ui.end_row();
+                }
+            });
     }
 }

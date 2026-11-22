@@ -493,10 +493,11 @@ fn tools_screen_shows_vocabulary_and_grant_matrix() {
     h.run();
     h.get_all(by().label("web_fetch")).next()
         .expect("vocabulary lists web_fetch");
-    h.get_all(by().label("granted")).next()
-        .expect("the grant matrix shows the explicit grant");
-    h.get_all(by().label_contains("under construction")).next()
-        .expect("the screen states honestly what is not built");
+    h.get_all(by().label("always")).next()
+        .expect("the grant matrix shows the explicit grant \
+                 (write_file for scribe)");
+    h.get_all(by().label_contains("Pending approvals")).next()
+        .expect("the approval gate section is on the screen");
 }
 
 #[test]
@@ -519,4 +520,182 @@ fn projects_screen_creates_and_staffs_a_project() {
     h.run();
     h.get_all(by().label("members (1): researcher")).next()
         .expect("the member shows in the project");
+}
+
+#[test]
+fn artifacts_screen_browses_real_workspace_files() {
+    let dir = std::env::temp_dir().join(format!(
+        "las-artifacts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = Arc::new(
+        CoreStore::open(dir.join("t.db")).unwrap());
+    let _ = store.create_agent("researcher", "Researcher", "",
+        &ProfileSpec {
+            system_prompt: "You research.".into(),
+            model_provider: "mock".into(),
+            model_id: "m".into(),
+            params: serde_json::Value::Null,
+            tool_grants: vec![],
+        });
+    // A REAL file in the agent's workspace jail.
+    let ws = dir.join("workspaces").join("researcher")
+        .join("notes");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("plan.md"), "step 1: verify")
+        .unwrap();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Artifacts,
+        artifacts_agent: "researcher".into(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    h.get_all(by().label("notes/plan.md")).next().unwrap();
+    // Select it: the preview shows the real content.
+    h.get_all(by().label("notes/plan.md")).next().unwrap()
+        .click();
+    h.run();
+    h.get_all(by().label_contains("step 1: verify")).next()
+        .expect("the preview shows the file content");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tasks_screen_creates_task_and_delivers_to_inbox() {
+    let store = store_with_team();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Tasks,
+        task_title: "Summarize the paper".into(),
+        task_instructions: "One page, key findings.".into(),
+        task_to: "researcher".into(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    // REAL action: the click persists the task AND posts to the
+    // agent's real inbox (the runtime will deliver it).
+    h.get_all(by().label("Create task")).next().unwrap().click();
+    h.run();
+    let tasks = store.list_tasks().unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].1, "Summarize the paper");
+    assert_eq!(tasks[0].4, "researcher");
+    assert_eq!(tasks[0].5, "open");
+    let inbox = store.inbox_for("researcher").unwrap();
+    assert!(inbox.iter().any(|m| m.payload_json.contains(
+        "Summarize the paper")),
+        "the task was delivered to the inbox");
+    // Mark done via the row button - also a real action.
+    let id = tasks[0].0;
+    h.get_all(by().label(&format!("done-{id}"))).next().unwrap()
+        .click();
+    h.run();
+    assert_eq!(store.list_tasks().unwrap()[0].5, "done");
+}
+
+#[test]
+fn workflow_screen_builds_and_exports_schema_v1_plan() {
+    let dir = std::env::temp_dir().join(format!(
+        "las-wf-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = Arc::new(
+        CoreStore::open(dir.join("t.db")).unwrap());
+    let mut h = harness_with(AppState {
+        nav: NavArea::Workflow,
+        plan_title: "Launch Review".into(),
+        plan_goal: "Review the launch checklist.".into(),
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    h.get_all(by().label("Create plan")).next().unwrap().click();
+    h.run();
+    h.get_all(by().label("add-step-launch-review")).next()
+        .unwrap().click();
+    h.run();
+    // Add a step through the real store path the form drives, then
+    // run one STABILIZING frame: clicks are coordinate-based, so
+    // the tree we click in must match the frame that consumes the
+    // click (the added step shifts the layout by one line).
+    store.add_plan_step("launch-review", "Check dates",
+                        "Verify the launch date.").unwrap();
+    h.run();
+    // Export: a REAL schema v1 file lands on disk.
+    h.get_all(by().label("export-launch-review")).next().unwrap()
+        .click();
+    h.run();
+    h.get_all(by().label_contains("Exported:")).next()
+        .expect("the screen reports the export path");
+    let file = dir.join("plans").join("launch-review.json");
+    let plan: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&file).unwrap()).unwrap();
+    assert_eq!(plan["schema_version"], 1);
+    assert_eq!(plan["title"], "Launch Review");
+    assert_eq!(plan["tasks"][0]["id"], "t1");
+    assert_eq!(plan["tasks"][0]["title"], "Check dates");
+    assert_eq!(plan["tasks"][0]["needs"], serde_json::json!([]));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn settings_screen_reports_real_diagnostics() {
+    let store = store_with_team();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Settings,
+        ..AppState::from_store(store)
+    });
+    h.run();
+    h.get_all(by().label("Desktop version")).next().unwrap();
+    h.get_all(by().label("0.4.0")).next()
+        .expect("the shipped version is displayed");
+    h.get_all(by().label_contains("quick_check: ok")).next()
+        .expect("the integrity check runs and reports ok");
+    h.get_all(by().label("2")).next()
+        .expect("agent count comes from the real store");
+}
+
+#[test]
+fn tools_screen_shows_modes_and_resolves_approvals() {
+    let store = store_with_team();
+    // The researcher holds web_fetch behind ask_once.
+    store.set_tool_grants("researcher",
+        r#"[{"tool":"web_fetch","mode":"ask_once"}]"#).unwrap();
+    // A model turn recorded an approval request (the runtime path
+    // from the las-core gate tests).
+    store.request_tool_approval(
+        "researcher", "web_fetch",
+        r#"{"url":"https://example.com/x"}"#).unwrap();
+    let mut h = harness_with(AppState {
+        nav: NavArea::Tools,
+        ..AppState::from_store(store.clone())
+    });
+    h.run();
+    // The grant matrix shows the ask-once mode.
+    h.get_all(by().label("ask once")).next()
+        .expect("the matrix shows the grant mode");
+    // The pending request is listed.
+    h.get_all(by().label_contains("example.com")).next()
+        .expect("the pending request is listed with its args");
+    // REAL action: approving clears the queue and upgrades the
+    // grant to always (ask-once semantics).
+    // REAL action: approving clears the queue.
+    h.get_all(by().label("approve-1")).next().unwrap().click();
+    h.run();
+    assert!(store.pending_approvals().unwrap().is_empty());
+    let profile = store.agent("researcher").unwrap().profile;
+    assert!(profile.tool_grants_json
+        .contains(r#""mode":"always""#),
+        "approve upgraded the grant: {}",
+        profile.tool_grants_json);
+    h.get_all(by().label("always")).next()
+        .expect("the matrix reflects the upgrade");
+
+    // Cycling a mode cell really persists: developer's read_file
+    // goes off -> always on the first click.
+    h.get_all(by().label("cycle-developer-read_file")).next()
+        .unwrap().click();
+    h.run();
+    let p2 = store.agent("developer").unwrap().profile;
+    assert!(p2.tool_grants_json
+        .contains(r#""tool":"read_file""#),
+        "the cycle click persisted a grant: {}", p2.tool_grants_json);
 }

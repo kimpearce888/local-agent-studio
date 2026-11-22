@@ -117,3 +117,68 @@ the specification's eventual target, and what happens instead:
 - Installers, signed updates and automatic update checks (DST-1)
   are not part of the source release; run from source or package it
   for your platform with your usual tooling.
+
+## The Rust desktop (egui shell, 0.4.0)
+
+A second, independent desktop front end lives in `rust/` (crates
+`las-core` and `las-desktop`).  It is the agent-first product shell:
+egui/eframe, pure Rust, no system web stack, packaged as the .deb and
+AppImage artifacts described in `release-policy.md`.  The Python GUI
+above remains the UX reference for the plan/run workflow; the Rust
+shell is the multi-agent workspace.
+
+All 14 navigation areas are live, each backed by the real engine
+(SQLite store in `las-core`), never mock data:
+
+- **Dashboard** - agent/inbox counts straight from the store.
+- **Agents** - profiles, enable/disable, tool grants at creation.
+- **Inbox & Messages** - per-agent inbox with queue/interrupt busy
+  modes; delivery is the runtime's real path.
+- **Collaboration Channels** - shared channels with comm-rule
+  enforcement.
+- **Agent Teams / Network** - default-deny agent-to-agent
+  communication rules (message / call / delegate).
+- **Sessions & Memory** - transcripts and the per-agent memory
+  store.
+- **Providers & Models** - endpoint registry (keys stay
+  `env:NAME` references, never values).
+- **Tools & Integrations** - the grant matrix with per-tool modes
+  (always / ask once / ask each / never) and the approval gate.
+- **Projects** - projects grouping agents; membership is
+  organization, never a permission bypass.
+- **Artifacts & Files** - read-only browsing of each agent's
+  workspace jail (the same files the tool engine writes).
+- **Tasks & Delegations** - tasks are tracked AND delivered to the
+  agent's real inbox.
+- **Workflow Studio** - plan editing that exports plan schema v1
+  JSON runnable by `python3 -m las run <file>`.
+- **Activity & History** - the audited event trail.
+- **Settings & Diagnostics** - version, data directory, SQLite
+  quick_check, row counts, provider endpoints.
+
+### The tool engine and the approval gate
+
+Inside a model turn, a reply may carry `TOOL_CALL` JSON lines.  Every
+call passes the permission broker in the spec 5.9 order: an explicit
+grant (nothing is granted implicitly), argument and size limits
+(5 MB per file), workspace-jail containment (path traversal and
+symlinked directories are refused), and the per-turn call budget.
+File tools (`read_file`, `write_file`, `list_files`) run inside the
+agent's own workspace; `web_fetch` runs behind a domain allowlist
+with resolved-IP SSRF checks (private/loopback targets are refused),
+manually re-validated redirects, a text-only MIME gate and 1 MB /
+10 s caps.  Every decision is audited as `tool.called` or
+`tool.denied`; the Rule-of-Two capability flags (untrusted input,
+sensitive access, external effect) are computed from the grants by
+code, never from what the model says.
+
+A grant in mode *ask once* or *ask each* defers the call: the model
+sees "deferred: this tool needs user approval first", the request
+appears in Tools & Integrations > Pending approvals, and approving
+it either upgrades the grant (ask once) or pays for exactly one more
+use (ask each).  Nothing executes while waiting.
+
+In this sandbox the window cannot open (no X11 libraries); the UI is
+verified headlessly with egui_kittest - the same draw code that runs
+on screen, asserted against the real store (see
+`rust/crates/las-desktop/tests/ui.rs`).

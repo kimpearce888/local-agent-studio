@@ -19,7 +19,8 @@ mod screens;
 pub use screens::{channels_screen, history_screen,
                   providers_screen, sessions_screen,
                   teams_screen, tools_screen,
-                  projects_screen};
+                  projects_screen, artifacts_screen, tasks_screen,
+                  workflow_screen, settings_screen};
 
 /// The mandate's fourteen navigation areas (section 14).
 /// The tool vocabulary agents can be granted explicitly (mandate
@@ -37,11 +38,13 @@ pub const NAV_AREAS: [&str; 14] = [
 ];
 
 /// Areas whose engine subsystem is wired into las-core today.
-const LIVE_AREAS: [&str; 10] = [
+const LIVE_AREAS: [&str; 14] = [
     "Dashboard", "Agents", "Inbox & Messages", "Sessions & Memory",
     "Collaboration Channels", "Agent Teams / Network",
     "Providers & Models", "Activity & History",
     "Tools & Integrations", "Projects",
+    "Artifacts & Files", "Tasks & Delegations",
+    "Workflow Studio", "Settings & Diagnostics",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +57,10 @@ pub enum NavArea {
     Teams,
     Providers,
     Projects,
+    Artifacts,
+    Tasks,
+    Workflow,
+    Settings,
     History,
     Tools,
     Planned(usize),     // index into NAV_AREAS
@@ -98,6 +105,21 @@ pub struct AppState {
     // Activity & History screen.
     pub history_selected_run: String,
     // Teams / topology screen.
+    /// Artifacts screen buffers.
+    pub artifacts_agent: String,
+    pub artifacts_selected: String,
+    /// Tasks screen buffers.
+    pub task_title: String,
+    pub task_instructions: String,
+    pub task_to: String,
+    /// Workflow screen buffers.
+    pub plan_title: String,
+    pub plan_goal: String,
+    pub plan_selected: String,
+    pub plan_step_title: String,
+    pub plan_step_instructions: String,
+    pub step_edit_plan: String,
+    pub plan_exported: String,
     /// Projects screen buffers.
     pub project_name: String,
     pub project_desc: String,
@@ -141,6 +163,18 @@ impl AppState {
                 std::sync::Mutex::new(Vec::new())),
             runtime: None,
             history_selected_run: String::new(),
+            artifacts_agent: String::new(),
+            artifacts_selected: String::new(),
+            task_title: String::new(),
+            task_instructions: String::new(),
+            task_to: String::new(),
+            plan_title: String::new(),
+            plan_goal: String::new(),
+            plan_selected: String::new(),
+            plan_step_title: String::new(),
+            plan_step_instructions: String::new(),
+            step_edit_plan: String::new(),
+            plan_exported: String::new(),
             project_name: String::new(),
             project_desc: String::new(),
             project_agent_input: String::new(),
@@ -217,6 +251,10 @@ pub fn draw_shell(ui: &mut egui::Ui, state: &mut AppState) {
             NavArea::History => history_screen(ui, state),
             NavArea::Tools => tools_screen(ui, state),
             NavArea::Projects => projects_screen(ui, state),
+            NavArea::Artifacts => artifacts_screen(ui, state),
+            NavArea::Tasks => tasks_screen(ui, state),
+            NavArea::Workflow => workflow_screen(ui, state),
+            NavArea::Settings => settings_screen(ui, state),
             NavArea::Planned(i) => planned_screen(ui, NAV_AREAS[i]),
         }
         ui.add_space(6.0);

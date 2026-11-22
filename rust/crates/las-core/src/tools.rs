@@ -33,6 +33,80 @@ pub const MAX_WRITE_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_FETCH_BYTES: usize = 1024 * 1024;
 /// Web fetch timeout.
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+/// Redirect hops followed (each re-validated).
+pub const MAX_REDIRECTS: usize = 3;
+
+/// Grant modes (spec 5.9 / TLS-2): Always runs, Never refuses,
+/// AskOnce and AskEach defer to the interactive approval gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GrantMode {
+    Always,
+    AskOnce,
+    AskEach,
+    Never,
+}
+
+impl GrantMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GrantMode::Always => "always",
+            GrantMode::AskOnce => "ask_once",
+            GrantMode::AskEach => "ask_each",
+            GrantMode::Never => "never",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<GrantMode> {
+        match s {
+            "always" => Some(GrantMode::Always),
+            "ask_once" => Some(GrantMode::AskOnce),
+            "ask_each" => Some(GrantMode::AskEach),
+            "never" => Some(GrantMode::Never),
+            _ => None,
+        }
+    }
+}
+
+/// One tool grant with its mode.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolGrant {
+    pub tool: String,
+    pub mode: GrantMode,
+}
+
+impl ToolGrant {
+    pub fn always(tool: &str) -> Self {
+        Self { tool: tool.into(), mode: GrantMode::Always }
+    }
+}
+
+/// Parse tool_grants_json, accepting BOTH the old format (an
+/// array of tool-id strings, treated as Always) and the object
+/// format ({"tool": ..., "mode": ...}).
+pub fn parse_grants(json: &str) -> Vec<ToolGrant> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json)
+        else { return Vec::new(); };
+    let Some(arr) = v.as_array() else { return Vec::new() };
+    arr.iter().filter_map(|e| match e {
+        serde_json::Value::String(s) => Some(ToolGrant {
+            tool: s.clone(), mode: GrantMode::Always }),
+        serde_json::Value::Object(o) => {
+            let tool = o.get("tool")?.as_str()?.to_string();
+            let mode = o.get("mode").and_then(
+                |m| m.as_str()).and_then(GrantMode::parse)
+                .unwrap_or(GrantMode::Always);
+            Some(ToolGrant { tool, mode })
+        }
+        _ => None,
+    }).collect()
+}
+
+/// Serialize grants to the object format.
+pub fn grants_to_json(grants: &[ToolGrant]) -> String {
+    serde_json::Value::Array(grants.iter().map(|g|
+        serde_json::json!({"tool": g.tool, "mode": g.mode.as_str()}))
+        .collect()).to_string()
+}
 
 /// One parsed tool call from a model reply.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,6 +119,9 @@ pub struct ToolCall {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decision {
     Allow,
+    /// Granted, but the mode defers to the approval gate: the
+    /// caller must record a pending approval and tell the model.
+    Ask(&'static str),
     Deny(&'static str),
 }
 
@@ -70,15 +147,22 @@ impl ToolOutcome {
 /// The permission broker + executor for one agent turn.
 pub struct Broker {
     jail_root: PathBuf,
-    grants: Vec<String>,
+    grants: Vec<ToolGrant>,
+    /// Tools with an approved one-shot (AskEach) pass: consumed
+    /// once, then the tool defers again.
+    one_shot: Vec<String>,
     web_domains: Vec<String>,
+    /// Allow fetching private/loopback addresses (LAN endpoints,
+    /// test harnesses).  OFF by default: the spec denies them
+    /// (audit item 12, SSRF).
+    allow_private_fetch: bool,
 }
 
 impl Broker {
     /// `jail_root` is the agent's workspace directory; file tools
     /// can never see outside it.
     pub fn new(jail_root: impl Into<PathBuf>,
-               grants: Vec<String>) -> Self {
+               grants: Vec<ToolGrant>) -> Self {
         let jail_root = jail_root.into();
         // Canonicalize once so every later starts_with comparison
         // runs on canonical paths on both sides (symlinks like
@@ -86,7 +170,22 @@ impl Broker {
         let _ = std::fs::create_dir_all(&jail_root);
         let jail_root = jail_root.canonicalize()
             .unwrap_or(jail_root);
-        Self { jail_root, grants, web_domains: Vec::new() }
+        Self { jail_root, grants, one_shot: Vec::new(),
+               web_domains: Vec::new(),
+               allow_private_fetch: false }
+    }
+
+    /// Tools approved for a single use (AskEach approvals).
+    pub fn with_one_shot(mut self, tools: Vec<String>) -> Self {
+        self.one_shot = tools;
+        self
+    }
+
+    /// Explicitly allow private/loopback fetch targets (LAN
+    /// endpoints, tests).  Defaults to off.
+    pub fn allow_private_fetch(mut self, allow: bool) -> Self {
+        self.allow_private_fetch = allow;
+        self
     }
 
     /// Web-fetch domains allowed for this agent (from profile
@@ -104,15 +203,36 @@ impl Broker {
     /// the workspace or run commands - a computed fact, not a
     /// promise.
     pub fn capability_flags(&self) -> (bool, bool, bool) {
-        let web = self.grants.iter().any(|g| g == "web_fetch");
+        // Never and ask-gated tools cannot act without the user,
+        // so only Always (or one-shot) web_fetch counts as the
+        // agent reaching outside.
+        let web = self.grants.iter().any(|g|
+            g.tool == "web_fetch" && g.mode == GrantMode::Always)
+            || self.one_shot.iter().any(|t| t == "web_fetch");
         (web, false, web)
     }
 
     /// Authorization in the spec 5.9 order.
     pub fn authorize(&self, call: &ToolCall) -> Decision {
-        // (1) allowlist: explicit grants only.
-        if !self.grants.iter().any(|g| *g == call.tool) {
+        // (1) allowlist: explicit grants only, mode-aware.
+        let Some(grant) = self.grants.iter().find(
+            |g| g.tool == call.tool) else {
             return Decision::Deny("tool not granted to this agent");
+        };
+        match grant.mode {
+            GrantMode::Never => {
+                return Decision::Deny(
+                    "grant mode for this tool is never");
+            }
+            GrantMode::AskOnce | GrantMode::AskEach => {
+                if self.one_shot.iter().any(|t| *t == call.tool) {
+                    // Approved for exactly this use.
+                } else {
+                    return Decision::Ask(
+                        "this tool needs user approval first");
+                }
+            }
+            GrantMode::Always => {}
         }
         // (2) arguments valid and inside limits.
         match call.tool.as_str() {
@@ -212,6 +332,11 @@ impl Broker {
             Decision::Deny(reason) => {
                 ToolOutcome::err(format!("denied: {reason}"))
             }
+            Decision::Ask(reason) => {
+                ToolOutcome::err(format!(
+                    "deferred: {reason} (an approval request was \
+                     recorded; approve it on the Tools screen)"))
+            }
             Decision::Allow => match call.tool.as_str() {
                 "read_file" => self.read_file(
                     call.args["path"].as_str().unwrap()),
@@ -300,41 +425,189 @@ impl Broker {
         ToolOutcome::ok(lines.join("\n"))
     }
 
+    /// Is this IP private, loopback, link-local or otherwise not
+    /// a public target?  (Audit item 12: SSRF hardening.)
+    fn ip_is_private(ip: std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(v4) => {
+                v4.is_private() || v4.is_loopback()
+                    || v4.is_link_local() || v4.is_unspecified()
+                    || v4.is_broadcast() || v4.is_documentation()
+            }
+            std::net::IpAddr::V6(v6) => {
+                if v6.is_loopback() || v6.is_unspecified() {
+                    return true;
+                }
+                // Unique local addresses fc00::/7.
+                let seg = v6.segments()[0];
+                if seg & 0xfe00 == 0xfc00 {
+                    return true;
+                }
+                // IPv4-mapped addresses carry IPv4 privacy.
+                match v6.to_ipv4_mapped() {
+                    Some(v4) => Self::ip_is_private(
+                        std::net::IpAddr::V4(v4)),
+                    None => false,
+                }
+            }
+        }
+    }
+
+    /// SSRF gate: every address the host resolves to must be
+    /// public (unless the broker explicitly allows private
+    /// targets).
+    fn host_ips_are_public(&self, host: &str)
+                           -> Result<(), String> {
+        use std::net::ToSocketAddrs;
+        let target = if host.contains(':') {
+            host.to_string()   // already host:port
+        } else {
+            format!("{host}:80")
+        };
+        let addrs: Vec<_> = target.to_socket_addrs()
+            .map_err(|e| format!("DNS resolution failed: {e}"))?
+            .collect();
+        if addrs.is_empty() {
+            return Err("host resolves to no address".into());
+        }
+        for a in addrs {
+            if Self::ip_is_private(a.ip()) {
+                if !self.allow_private_fetch {
+                    return Err(format!(
+                        "host resolves to a private/loopback \
+                         address ({}), refused", a.ip()));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn web_fetch(&self, url: &str) -> ToolOutcome {
-        // Hardened-fetch items (redirect pinning, MIME checks) are
-        // audit item 5; v1 is a plain bounded GET through the
-        // domain allowlist above.
+        // Hardened fetch (audit item 12): domain allowlist +
+        // resolved-IP checks (SSRF), manual redirects that are
+        // re-validated per hop, a text-only MIME gate, and the
+        // 1 MB / 10 s caps.
         let agent = ureq::Agent::new_with_config(
             ureq::config::Config::builder()
                 .timeout_global(Some(FETCH_TIMEOUT))
+                .max_redirects(0)   // followed manually, each
+                                    // hop re-validated
                 .build());
-        let call = agent.get(url).call();
-        match call {
-            Ok(mut resp) => {
-                let mut buf = Vec::new();
-                let mut chunk = [0u8; 8192];
-                let mut reader = resp.body_mut().as_reader();
-                loop {
-                    match reader.read(&mut chunk) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            buf.extend_from_slice(&chunk[..n]);
-                            if buf.len() > MAX_FETCH_BYTES {
-                                return ToolOutcome::err(
-                                    "response exceeds the 1 MB \
-                                     fetch cap".into());
+        let mut current = url.to_string();
+        let mut body: Vec<u8> = Vec::new();
+        for _hop in 0..=MAX_REDIRECTS {
+            let host = url_host(&current);
+            // Per-hop revalidation: allowlist + fresh DNS/IP check.
+            if !self.web_domains.iter().any(|d| {
+                host == d.as_str()
+                    || (host.strip_prefix("www.")
+                        == Some(d.as_str()))
+            }) {
+                return ToolOutcome::err(
+                    "host is not in the agent's domain allowlist"
+                        .into());
+            }
+            if let Err(reason) = self.host_ips_are_public(host) {
+                return ToolOutcome::err(format!(
+                    "denied: {reason}"));
+            }
+            let resp = agent.get(&current)
+                .header("User-Agent", "las-web-fetch/1")
+                .call();
+            return match resp {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    if (300..400).contains(&status) {
+                        // redirects(0): the 3xx comes back as a
+                        // normal response.  Follow it manually -
+                        // the next loop iteration re-runs the
+                        // allowlist and the DNS/IP checks on the
+                        // NEW host.
+                        let loc = resp.headers()
+                            .get("Location")
+                            .and_then(|v| v.to_str().ok())
+                            .unwrap_or("").to_string();
+                        if loc.is_empty() {
+                            return ToolOutcome::err(format!(
+                                "redirect {status} without a \
+                                 Location header"));
+                        }
+                        current = resolve_redirect(&current, &loc);
+                        continue;
+                    }
+                    // MIME gate: only text may enter the context.
+                    let ctype = resp.headers()
+                        .get("Content-Type")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("").to_lowercase();
+                    let text_like = ctype.is_empty()
+                        || ctype.starts_with("text/")
+                        || ctype.starts_with("application/json")
+                        || ctype.starts_with("application/xml")
+                        || ctype.starts_with(
+                            "application/xhtml+xml")
+                        || ctype.starts_with(
+                            "application/javascript");
+                    if !text_like {
+                        return ToolOutcome::err(format!(
+                            "refused content-type {ctype:?} \
+                             (only text is fetched)"));
+                    }
+                    let mut body_owned = resp.into_body();
+                    let mut reader = body_owned.as_reader();
+                    let mut chunk = [0u8; 8192];
+                    loop {
+                        match reader.read(&mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                body.extend_from_slice(
+                                    &chunk[..n]);
+                                if body.len() > MAX_FETCH_BYTES {
+                                    return ToolOutcome::err(
+                                        "response exceeds the \
+                                         1 MB fetch cap".into());
+                                }
+                            }
+                            Err(e) => {
+                                return ToolOutcome::err(format!(
+                                    "fetch failed: {e}"))
                             }
                         }
-                        Err(e) => return ToolOutcome::err(format!(
-                            "fetch failed: {e}")),
                     }
+                    return ToolOutcome::ok(
+                        String::from_utf8_lossy(&body)
+                            .into_owned());
                 }
-                ToolOutcome::ok(String::from_utf8_lossy(&buf)
-                    .into_owned())
+                Err(e) => ToolOutcome::err(format!(
+                    "fetch failed: {e}")),
             }
-            Err(e) => ToolOutcome::err(format!(
-                "fetch failed: {e}")),
         }
+        ToolOutcome::err("too many redirects (over                           MAX_REDIRECTS hops)".into())
+    }
+}
+
+/// Resolve a redirect Location (absolute or path-relative)
+/// against the current URL.  No URL crate: a tiny honest parser.
+fn resolve_redirect(current: &str, location: &str) -> String {
+    if location.starts_with("http://")
+        || location.starts_with("https://") {
+        return location.to_string();
+    }
+    // scheme://host prefix of the current URL.
+    let scheme_end = current.find("://")
+        .map(|i| i + 3).unwrap_or(0);
+    let host_end = current[scheme_end..]
+        .find(['/', '?', '#'])
+        .map(|i| scheme_end + i)
+        .unwrap_or(current.len());
+    let base = &current[..host_end];
+    if location.starts_with('/') {
+        format!("{base}{location}")
+    } else {
+        // A relative path: resolve against the current directory.
+        let dir_end = current.rfind('/').unwrap_or(
+            current.len());
+        format!("{}/{}", &current[..dir_end], location)
     }
 }
 
@@ -388,7 +661,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         Broker::new(&tmp, grants.iter()
-                    .map(|g| g.to_string()).collect())
+                    .map(|g| ToolGrant::always(g)).collect())
     }
 
     #[test]
@@ -503,6 +776,232 @@ mod tests {
         // Malformed and empty lines never panic or match.
         assert!(parse_tool_calls(
             "TOOL_CALL not-json\nTOOL_CALL {}\nnope").is_empty());
+    }
+
+    #[test]
+    fn ask_mode_defers_and_one_shot_passes_once() {
+        let tmp = std::env::temp_dir().join(format!(
+            "las-tools-ask-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let grants = vec![
+            ToolGrant { tool: "read_file".into(),
+                        mode: GrantMode::AskOnce },
+            ToolGrant { tool: "write_file".into(),
+                        mode: GrantMode::AskEach },
+            ToolGrant { tool: "list_files".into(),
+                        mode: GrantMode::Never },
+        ];
+        let call = |t: &str| ToolCall {
+            tool: t.into(),
+            args: serde_json::json!({"path": "a.md"}),
+        };
+        let b = Broker::new(&tmp, grants.clone());
+        // Ask modes defer without a one-shot.
+        assert_eq!(b.authorize(&call("read_file")),
+            Decision::Ask("this tool needs user approval first"));
+        assert_eq!(b.authorize(&call("write_file")),
+            Decision::Ask("this tool needs user approval first"));
+        // Never denies even with a one-shot present.
+        let b2 = Broker::new(&tmp, grants.clone())
+            .with_one_shot(vec![
+                "read_file".into(), "write_file".into(),
+                "list_files".into()]);
+        assert_eq!(b2.authorize(&call("list_files")),
+            Decision::Deny("grant mode for this tool is never"));
+        // With a one-shot, ask modes run - and the flags count
+        // one-shot reach.
+        assert_eq!(b2.authorize(&call("read_file")),
+                   Decision::Allow);
+    }
+
+    #[test]
+    fn grants_json_roundtrip_and_legacy_strings() {
+        // Legacy string arrays parse as Always grants.
+        let legacy = parse_grants(
+            r#"["read_file", "web_fetch"]"#);
+        assert_eq!(legacy, vec![
+            ToolGrant::always("read_file"),
+            ToolGrant::always("web_fetch")]);
+        // Object format round-trips with modes.
+        let grants = vec![
+            ToolGrant::always("read_file"),
+            ToolGrant { tool: "web_fetch".into(),
+                        mode: GrantMode::AskOnce },
+            ToolGrant { tool: "write_file".into(),
+                        mode: GrantMode::AskEach },
+            ToolGrant { tool: "list_files".into(),
+                        mode: GrantMode::Never },
+        ];
+        let json = grants_to_json(&grants);
+        assert_eq!(parse_grants(&json), grants);
+        // Garbage degrades to no grants, never to all-granted.
+        assert!(parse_grants("not json").is_empty());
+        assert!(parse_grants("{}").is_empty());
+    }
+
+    #[test]
+    fn ask_grants_do_not_set_capability_flags() {
+        let tmp = std::env::temp_dir().join(format!(
+            "las-tools-flags-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&tmp);
+        let gated = vec![ToolGrant {
+            tool: "web_fetch".into(),
+            mode: GrantMode::AskOnce }];
+        let b = Broker::new(&tmp, gated);
+        // Ask-gated web_fetch cannot act without the user, so the
+        // flags stay clear until a one-shot exists.
+        assert_eq!(b.capability_flags(), (false, false, false));
+        let b2 = Broker::new(&tmp, vec![])
+            .with_one_shot(vec!["web_fetch".into()]);
+        assert_eq!(b2.capability_flags(), (true, false, true));
+    }
+
+    use std::io::{Read as _, Write as _};
+    use std::net::{IpAddr, TcpListener};
+
+    /// A minimal real HTTP server on 127.0.0.1 for the hardened
+    /// fetch tests (SSRF, redirects, MIME).
+    fn spawn_test_server() -> std::net::SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut s = stream;
+                let mut buf = [0u8; 4096];
+                let mut n = 0usize;
+                // Read until end of the request headers.
+                loop {
+                    let k = s.read(&mut buf[n..]).unwrap_or(0);
+                    if k == 0 { break; }
+                    n += k;
+                    if String::from_utf8_lossy(&buf[..n])
+                        .contains("\r\n\r\n") || n == buf.len()
+                    { break; }
+                }
+                let req = String::from_utf8_lossy(&buf[..n])
+                    .into_owned();
+                let path = req.split(' ').nth(1)
+                    .unwrap_or("/");
+                let resp: String = match path {
+                    "/ok" =>
+                        "HTTP/1.1 200 OK\r\nContent-Type: \
+                         text/plain\r\nContent-Length: 5\r\n\
+                         Connection: close\r\n\r\nhello"
+                        .into(),
+                    "/redir" =>
+                        "HTTP/1.1 302 Found\r\nLocation: /ok\r\n\
+                         Content-Length: 0\r\nConnection: close\r\n\
+                         \r\n".into(),
+                    "/cross" =>
+                        // Redirects to a host:port NOT in the
+                        // allowlist (127.0.0.1:1).
+                        "HTTP/1.1 302 Found\r\nLocation: \
+                         http://127.0.0.1:1/ok\r\nContent-Length: 0\
+                         \r\nConnection: close\r\n\r\n".into(),
+                    "/bin" =>
+                        "HTTP/1.1 200 OK\r\nContent-Type: \
+                         application/octet-stream\r\n\
+                         Content-Length: 4\r\nConnection: close\
+                         \r\n\r\n\u{00}\u{01}\u{02}\u{03}".into(),
+                    _ =>
+                        "HTTP/1.1 404 Not Found\r\n\
+                         Content-Length: 0\r\nConnection: close\
+                         \r\n\r\n".into(),
+                };
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn private_ip_ranges_are_detected() {
+        let privv = ["10.0.0.1", "172.16.5.5", "192.168.1.1",
+                     "127.0.0.1", "169.254.9.9", "0.0.0.0",
+                     "255.255.255.255", "203.0.113.5",
+                     "::1", "fc00::1", "fd12::1",
+                     "::ffff:192.168.0.1"];
+        for a in privv {
+            let ip: IpAddr = a.parse().unwrap();
+            assert!(Broker::ip_is_private(ip), "{a} is private");
+        }
+        let public = ["8.8.8.8", "1.1.1.1", "2606:4700::1111"];
+        for a in public {
+            let ip: IpAddr = a.parse().unwrap();
+            assert!(!Broker::ip_is_private(ip),
+                    "{a} is public and must pass");
+        }
+    }
+
+    #[test]
+    fn ssrf_loopback_is_refused_by_default() {
+        let addr = spawn_test_server();
+        let host = format!("127.0.0.1:{}", addr.port());
+        let b = broker(&["web_fetch"])
+            .with_web_domains(vec![host.clone()])
+            .allow_private_fetch(false);
+        let out = b.execute(&ToolCall {
+            tool: "web_fetch".into(),
+            args: serde_json::json!(
+                {"url": format!("http://{host}/ok")}),
+        });
+        assert!(!out.ok, "loopback must be refused by default");
+        assert!(out.output.contains("private/loopback"),
+                "{}", out.output);
+    }
+
+    #[test]
+    fn hardened_fetch_follows_validated_redirects_and_mime() {
+        let addr = spawn_test_server();
+        let host = format!("127.0.0.1:{}", addr.port());
+        // Tests explicitly allow the loopback target; the domain
+        // allowlist and every other check still applies.
+        let b = broker(&["web_fetch"])
+            .with_web_domains(vec![host.clone()])
+            .allow_private_fetch(true);
+        let call = |path: &str| b.execute(&ToolCall {
+            tool: "web_fetch".into(),
+            args: serde_json::json!(
+                {"url": format!("http://{host}{path}")}),
+        });
+
+        // Plain text fetch works.
+        let out = call("/ok");
+        assert!(out.ok, "{}", out.output);
+        assert_eq!(out.output, "hello");
+
+        // A same-host redirect is followed manually and fetched.
+        let out = call("/redir");
+        assert!(out.ok, "{}", out.output);
+        assert_eq!(out.output, "hello");
+
+        // A redirect to a non-allowlisted host is REFUSED (the
+        // Location is re-validated per hop).
+        let out = call("/cross");
+        assert!(!out.ok, "{}", out.output);
+        assert!(out.output.contains(
+            "not in the agent's domain allowlist"),
+            "{}", out.output);
+
+        // Binary content types never enter the context.
+        let out = call("/bin");
+        assert!(!out.ok, "{}", out.output);
+        assert!(out.output.contains("content-type"),
+                "{}", out.output);
+    }
+
+    #[test]
+    fn redirect_locations_resolve_relative_and_absolute() {
+        assert_eq!(
+            resolve_redirect("http://a.example/x/y", "/z"),
+            "http://a.example/z");
+        assert_eq!(
+            resolve_redirect("http://a.example/x/y", "z"),
+            "http://a.example/x/z");
+        assert_eq!(
+            resolve_redirect("http://a.example/x", "https://b/x"),
+            "https://b/x");
     }
 
     #[test]

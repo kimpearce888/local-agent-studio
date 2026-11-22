@@ -45,7 +45,7 @@ Independent persistent multi-agent desktop environment, Rust-first:
 | 9 | Tasks share the run workspace | OPEN (design) | per-run workspace is per the old spec; the agent-first model gives per-agent/per-task workspaces (Rust) |
 | 10 | Shell tool without OS sandbox | OPEN | subprocess execution remains flagged; Rust `security` module will enforce Landlock (kernel 5.10 present) + argument arrays; until then run_command stays deny-by-default |
 | 11 | Empty allowlist = unrestricted | **FIXED** | `tools.py` denies with `command-allowlist-empty` when shell is enabled but the allowlist is empty (fail closed); tests `TestItem11` |
-| 12 | Web fetch SSRF/IP/redirect hardening | OPEN | broker gates the tool; the hardened fetcher (resolved-IP checks, redirect revalidation, private/link-local denial, response limits) lands in the Rust tools module |
+| 12 | Web fetch SSRF/IP/redirect hardening | **FIXED** | `tools.rs` hardened fetch: domain allowlist + resolved-IP checks (private/loopback/link-local/ULA/IPv4-mapped refused, SSRF), manual redirects re-validated per hop (max 3), text-only MIME gate, 1 MB / 10 s caps; tests include a real local HTTP server covering loopback refusal, same-host redirect follow, cross-host redirect refusal and binary refusal |
 | 13 | Credentials as plaintext | LARGELY ADDRESSED | keys are `env:NAME` references, never values; serializer audit pending in Rust port |
 | 14 | Registry one-level nesting limit | OPEN | `registry.py:104` rejects deeper descendants; the Rust module tree designs recursive nesting from the start; Python registry fix deferred to the port (no user impact today) |
 | 15 | Attempt state/retry termination | FIXED (prior) | attempt state machine; 1000/1000 kill-resume benchmark |
@@ -55,9 +55,9 @@ Independent persistent multi-agent desktop environment, Rust-first:
 | 19 | Capability tests on real servers | BLOCKED (environment) | no model server in this sandbox; harness shipped for the user's machine |
 | 20 | Benchmark is mock-only | BLOCKED (environment) | no reference model available; mock benchmark pins determinism only |
 | 21 | providers.mock removal CI failure | FIXED (prior) | removal tests pass on main |
-| 22 | CI matrix + packaging smoke | PARTLY | CI green; `.deb` via `dpkg-deb` planned; AppImage tooling check pending |
-| 23 | Runtime/package version agreement | OPEN | Python `0.3.0` vs Rust workspace `0.4.0`; unify at release |
-| 24 | Docs reflect reality | IN PROGRESS | this file + HANDOVER.md added; full doc pass at release |
+| 22 | CI matrix + packaging smoke | **FIXED** | CI green (badge: passing); `scripts/make_deb.py` and `scripts/make_appimage.py` rebuild BOTH artifacts from the release binary and verify them structurally (unpack/self-extract + checksum); both re-run green for 0.4.0 |
+| 23 | Runtime/package version agreement | **FIXED** | unified at 0.4.0: `pyproject.toml`, `las.__version__`, Cargo workspace, both artifact filenames |
+| 24 | Docs reflect reality | **DONE (v0.4.0)** | BUILD_STATUS + HANDOVER final pass; `desktop-app.md` gained the full egui-shell section (14 live areas, tool engine, approval gate); release-policy covers the installer pipeline; packaging scripts persisted |
 
 ## Decisions (ADRs in `docs/adr/`)
 
@@ -310,13 +310,46 @@ budget (they still exit the moment the run is terminal).
 Rust: 80 green (60 lib incl. 8 tools + 2 loop tests, 6 acceptance,
 14 UI). Python: 313 OK headless.
 
+## Production-readiness pass (after cbce96a)
+
+The 14-area desktop shell is COMPLETE, the approval gate is in, and
+web fetch is hardened.  What this pass added:
+
+- **Four remaining screens** (14/14 areas live): Artifacts & Files
+  (read-only browsing of the agent workspace jails the tool engine
+  writes, 5 MB/8 KB preview caps), Tasks & Delegations (task rows
+  that are ALSO delivered to the agent's real inbox; the runtime
+  picks them up), Workflow Studio (plans export as plan schema v1
+  JSON runnable by `python3 -m las run <file>`), Settings &
+  Diagnostics (version, data dir, SQLite quick_check, row counts,
+  provider endpoints).
+- **Approval gate (TLS-2, spec 5.9)**: grant modes always / ask
+  once / ask each / never (legacy string grants parse as always).
+  An ask-mode call is DEFERRED - the model is told, the request is
+  queued in pending_approvals, and nothing executes.  Approving on
+  the Tools screen either upgrades the grant (ask once) or pays for
+  exactly one more use (ask each, one_shot_grants consumed by the
+  real execution).  Ask-gated tools do not set the Rule-of-Two
+  external flags until approved.  Lifecycle tests cover defer ->
+  approve -> run for both modes.
+- **Hardened web fetch (audit item 12)**: see the audit table.
+- **Packaging scripts persisted** (release-policy now matches
+  reality): `scripts/make_deb.py` + `scripts/make_appimage.py`
+  rebuild and structurally verify both artifacts; re-run green for
+  0.4.0 (.deb 8.5 MB, AppImage 12 MB).  The appimagetool path uses
+  the extracted form (no FUSE in the build sandbox).
+- CI on GitHub: green (badge: passing) for cbce96a.
+
+Test totals: Rust 94 green (69 las-core lib incl. 15 tools + 4
+gate/loop integration, 6 acceptance, 19 kittest UI); Python 313 OK
+headless (skips recorded honestly).
+
 ## Exact next engineering action
 
-Context assembly for real agent work: the responder currently sends
-system prompt + single message; next is token-budgeted context
-assembly over the session transcript and memory (mandate 9), then
-agent-to-agent conversation flows through the running runtime
-(replies routed back into the sender's inbox), the Tools &
-Integrations screen over the tool-grant model, and an installer
-pipeline note in the release policy (docs/user/release-policy.md)
-covering the .deb and AppImage artifacts.
+None blocking for v0.4.0 - the P0 scope is built, tested and
+packaged.  Post-launch (P1, not release-blocking): shell/code tools
+behind Landlock (audit item 10), MCP client, artifacts as
+versioned first-class entities, a real tokenizer for context
+assembly, and the environment-blocked verifications (real-server
+capability tests and benchmark, audit items 19/20; installing the
+artifacts needs root/FUSE on a target machine).

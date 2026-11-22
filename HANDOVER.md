@@ -46,25 +46,29 @@ reference and migration source, kept runnable for parity tests.
 
 ## What is NOT done (do not claim otherwise)
 
-- Tool execution v1 is IN (broker, jailed executors, audit, the
-  TOOL_CALL loop, Rule-of-Two flags) but the Ask-once/Ask-each grant
-  modes need the interactive approval gate (v1 grants are Always or
-  denied), shell/code and MCP tools are P1, web_fetch still needs
-  redirect pinning (hardened fetch, audit item 5), artifacts as
-  first-class entities, Landlock sandboxing (audit items 10, 12).
-  Context assembly is a chars/4 approximation (deliberate; a real
-  tokenizer is optional future work). Packaging: .deb AND AppImage are built and
-  structurally verified; INSTALLING/RUNNING them needs root/FUSE -
-  environment-blocked, recorded honestly. Versions are unified at
-  0.4.0.
+- Tool execution v1 is IN and COMPLETE for the P0 scope: broker,
+  jailed executors, audit, the TOOL_CALL loop, Rule-of-Two flags,
+  the approval gate (ask once / ask each with a pending-approvals
+  queue on the Tools screen) and the hardened web fetch (SSRF
+  resolved-IP checks, per-hop re-validated redirects, MIME gate -
+  audit item 12 fixed).  Still P1, not release-blocking: shell/code
+  tools behind Landlock (audit item 10), MCP client, artifacts as
+  versioned first-class entities (the Artifacts screen browses the
+  real workspace files today), a real tokenizer for context
+  assembly (the chars/4 approximation is deliberate).  Packaging:
+  .deb and AppImage are rebuilt and STRUCTURALLY VERIFIED by
+  `scripts/make_deb.py` / `scripts/make_appimage.py`; installing
+  them needs root/FUSE on the target machine - environment-blocked
+  here, recorded honestly.  Versions unified at 0.4.0.  The
+  14-area desktop shell is complete (14/14 live, kittest-verified).
 - Shared inference scheduler, context rollover, MCP client, hardened
   web fetch, Landlock sandboxing for run_command (audit items 5, 10,
   12), recursive module registry (item 14).
 - Real-server capability tests and real-model benchmark (items 19,
   20) - blocked by the sandbox; harnesses must ship for the user.
-- `.deb`/AppImage packaging, version unification (Python 0.3.0 vs
-  Rust workspace 0.4.0), the 14-area desktop UI, acceptance scenarios
-  19.1-19.8.
+- Real-server capability tests and the real-model benchmark (audit
+  items 19, 20) - blocked by this sandbox having no model server;
+  the harnesses are shipped for the user's machine.
 
 ## How to run everything
 
