@@ -60,8 +60,16 @@ jobs:
   # root, so the GUI libraries are properly INSTALLED here -
   # stronger than the extracted-package fallback a rootless build
   # host uses (LAS_SMOKE_LIBDIR).
+  #
+  # Pinned to ubuntu-22.04 ON PURPOSE: artifacts must run on the
+  # OLDEST mainstream userspace we ship to.  ubuntu-latest (newer
+  # glibc) produced binaries requiring GLIBC_2.43 that failed to
+  # start even on Debian 13 - re-verified by downloading the
+  # uploaded artifacts back onto such a machine.  If GitHub retires
+  # the 22.04 image, move this job into an ubuntu:22.04 container
+  # rather than bumping the floor.
   artifacts:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4

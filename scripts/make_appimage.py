@@ -200,7 +200,7 @@ def main() -> int:
     # homepage URL is a warning otherwise.  CI caught all three.
     import datetime
     today = datetime.date.today().isoformat()
-    (metainfo / "local-agent-studio.appdata.xml").write_text(
+    (metainfo / "io.github.kimpearce888.local-agent-studio.appdata.xml").write_text(
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         '<component type="desktop-application">\n'
         '  <id>io.github.kimpearce888.local-agent-studio</id>\n'
@@ -226,7 +226,7 @@ def main() -> int:
     if shutil.which("appstreamcli"):
         r = subprocess.run(
             ["appstreamcli", "validate",
-             str(metainfo / "local-agent-studio.appdata.xml")],
+             str(metainfo / "io.github.kimpearce888.local-agent-studio.appdata.xml")],
             capture_output=True, text=True)
         # appstreamcli versions disagree on whether warnings flip
         # the exit status; appimagetool fails on ERRORS only, so

@@ -57,12 +57,37 @@ def workspace_version() -> str | None:
     return None
 
 
+def _max_symbol_version(binary: Path, prefix: str) -> str | None:
+    """The highest <prefix>_X.Y(.Z) symbol version the binary
+    requires (objdump -T), e.g. GLIBC_2.35 - the floor the build
+    machine's libc imposes on every target machine."""
+    r = subprocess.run(["objdump", "-T", str(binary)],
+                       capture_output=True, text=True)
+    best: tuple[int, ...] | None = None
+    best_s = None
+    for line in r.stdout.splitlines():
+        for tok in line.split():
+            if not tok.startswith(prefix):
+                continue
+            try:
+                nums = tuple(int(p) for p in
+                             tok[len(prefix):].split("."))
+            except ValueError:
+                continue
+            if best is None or nums > best:
+                best, best_s = nums, tok[len(prefix):]
+    return best_s
+
+
 def shared_depends(binary: Path) -> str:
     """Runtime dependencies as a Depends list.  ldd + dpkg -S derive
     the LINKED libraries (this binary is static except libc/libm/
     libgcc); winit dlopens the X11 client set at runtime, so that
     documented GUI runtime is appended - and the execution smoke
-    below proves the whole set really suffices to boot the GUI."""
+    below proves the whole set really suffices to boot the GUI.
+    libc6/libgcc-s1 get VERSIONED constraints from the symbol
+    versions the binary actually requires, so installing on an
+    older distro fails honestly at dpkg instead of at startup."""
     pkgs: list[str] = []
     r = subprocess.run(["ldd", str(binary)],
                        capture_output=True, text=True)
@@ -78,6 +103,16 @@ def shared_depends(binary: Path) -> str:
             pkg = q.stdout.split(":")[0].strip()
             if pkg not in pkgs:
                 pkgs.append(pkg)
+    # Versioned floors for the toolchain runtime libraries, derived
+    # from the binary itself (build on the OLDEST distro you ship
+    # to, or the floor silently rises - caught by re-verifying the
+    # artifact on a glibc-older machine).
+    for prefix, pkg in (("GLIBC", "libc6"),
+                        ("GCC", "libgcc-s1")):
+        if pkg in pkgs:
+            floor = _max_symbol_version(binary, prefix)
+            if floor:
+                pkgs[pkgs.index(pkg)] = f"{pkg} (>= {floor})"
     # The dlopen'd set (winit X11 + xkbcommon-x11 + wgpu's EGL and
     # Vulkan loaders); libxcb-xkb1 rides along with
     # libxkbcommon-x11-0 but is listed for completeness.
