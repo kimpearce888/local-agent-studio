@@ -134,9 +134,12 @@ class TestRuns(ApiTestBase):
                     break
                 time.sleep(0.05)
             if state.get("status") != "succeeded":
-                # Budget expired: dump where EVERY thread is stuck so
-                # the next CI flake diagnoses itself instead of
-                # showing a bare 'running != succeeded' (runs 33/35).
+                # Terminal-but-not-succeeded, or budget expired:
+                # dump the event payloads (a RUN-THREAD-CRASHED
+                # run.failed carries the exception + full stack) and
+                # where every thread is stuck, so the next CI flake
+                # diagnoses itself instead of showing a bare
+                # 'running != succeeded' (runs 33/35/38).
                 # faulthandler needs a real file descriptor, so a
                 # temp file - NOT StringIO (run 35: fileno error).
                 import faulthandler, tempfile
@@ -144,8 +147,13 @@ class TestRuns(ApiTestBase):
                     faulthandler.dump_traceback(file=fh)
                     fh.seek(0)
                     dump_text = fh.read()
+                _, ev = self.call(f"/runs/{run_id}/events")
+                events_text = "\n".join(
+                    f"{e['type']}: {e.get('payload', '')}"
+                    for e in ev.get("events", []))
                 self.fail(
-                    f"run did not succeed in 60s; state={state}\n"
+                    f"run did not succeed; state={state}\n"
+                    f"--- events ---\n{events_text}\n"
                     f"--- thread dump at failure ---\n{dump_text}")
             self.assertEqual(state["status"], "succeeded", state)
             status, body = self.call(f"/runs/{run_id}/events")

@@ -54,11 +54,15 @@ class _RunCoordinator:
                 # A crashed run thread must never leave the run
                 # stuck at 'running' forever with no trace: turn the
                 # crash into a run.failed event (data, RUN-3) and
-                # keep serving.
+                # keep serving.  The full stack goes into the event
+                # payload - the flake diagnosis reads it back from
+                # the events endpoint.
+                import traceback
                 try:
                     engine.store.append(run_id, "run.failed", {
                         "code": "RUN-THREAD-CRASHED",
-                        "error": f"{type(exc).__name__}: {exc}"})
+                        "error": f"{type(exc).__name__}: {exc}",
+                        "stack": traceback.format_exc()})
                 except Exception:  # noqa: BLE001
                     pass
             finally:

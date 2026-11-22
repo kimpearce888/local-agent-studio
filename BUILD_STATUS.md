@@ -362,22 +362,19 @@ headless (skips recorded honestly).
   the events test ran undecorated and failed with KeyError
   'run_id'.  Fixed in 6a4d58b; all three removal verifications pass
   locally again.
-- **Open flake (runs 33 and 35, 3.12 job, removal-copy suites)**:
-  `test_run_end_to_end_events`' background run stayed at status
-  'running' with 0 tokens for the whole 60s poll budget - the run
-  thread leaves no exception, so it is blocked or spinning.  It
-  hit the reporting copy once and the selftest copy once; the main
-  suite on the same job passes every time.  100 local iterations
-  of the exact failing sequence (60 multi-core, 40 pinned to one
-  core, CPython 3.12.16) did not reproduce it.  Defenses shipped:
-  the API run coordinator now records a run thread crash as a
-  `run.failed` event (RUN-THREAD-CRASHED) instead of leaving the
-  run stuck at 'running' forever (with a regression test), and the
-  test dumps every thread's stack into its failure message when
-  the 60s budget expires - the next CI occurrence pinpoints the
-  stuck line (runs 33/35 predate the working dump; run 35's first
-  attempt crashed on StringIO.fileno, fixed in 72486c8).
-- Run 36 (72486c8): all four jobs green.
+- **Flake root cause NARROWED (runs 33/35/38, 3.12 job,
+  removal-copy suites)**: run 38 finally carried the working
+  self-diagnosis - the state shows `failure_code:
+  RUN-THREAD-CRASHED`: the run THREAD CRASHES with an exception
+  (caught by the coordinator hardening from 2fd8e50, recorded as
+  run.failed; ~24s into the run, before the first attempt).
+  Runs 33/35 showed the same window stuck at 'running' - blocked
+  vs crashed may be two faces of one fault.  100 local iterations
+  did not reproduce it.  The coordinator now records the FULL
+  STACK in the run.failed payload and the test dumps the event
+  payloads + all thread stacks on failure - the next CI occurrence
+  names the exception and the exact line.
+- Runs 36/37 (72486c8, c0fadf9): all four jobs green.
 
 ## Session: rollover + MCP client (after c0fadf9)
 
