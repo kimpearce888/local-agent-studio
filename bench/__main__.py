@@ -44,6 +44,32 @@ def _run_real(args, data_dir: str) -> int:
              f"{len(found)} reachable" if found else "none of the "
              "well-known ports answered (continuing anyway)"))
     adapter = real_adapter(args.provider, base_url, args.timeout)
+    # Throttle guard (measured 2026-11-22: an account-wide 429 window
+    # outlasted a 40-minute full silence AND the session gap; /v1/models
+    # is answered by the local proxy, so the probe reports
+    # reachable+authenticated while every live chat call dies.  Without
+    # this guard the corpus then burns goals as plan failures on a hot
+    # limit - exactly what the 0.4.6 session had to kill by hand.)
+    from las.modules.providers.base import ChatRequest, Message, ProviderError
+    try:
+        saw_text = False
+        for ev in adapter.chat(ChatRequest(
+                model=model,
+                messages=[Message("user", "Reply with exactly: ok")],
+                tools=[], params={"max_tokens": 8})):
+            if ev.kind == "text_delta" and ev.text.strip():
+                saw_text = True
+        if not saw_text:
+            print("chat round-trip produced no text; aborting before the corpus")
+            return 2
+        print("chat round-trip: ok (the upstream answers live traffic)")
+    except ProviderError as exc:
+        print(f"chat round-trip failed ({exc.code}): the upstream is "
+              f"throttling or refusing live traffic.  Aborting BEFORE "
+              f"the corpus burns goals - wait out the 429 window, "
+              f"restart the proxy and rerun.")
+        return 2
+
     started = time.monotonic()
     caps = probe(adapter, model, provider_id=args.provider)
     print(f"capability probe ({time.monotonic() - started:.1f}s): "
