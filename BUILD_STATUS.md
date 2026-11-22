@@ -505,6 +505,57 @@ side untouched this session (315 at 9cb4134).
 Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
+
+## Session: reference-model benchmark + the three interop findings (0.4.3)
+
+The remaining PRD benchmark gap was the reference-model numbers.  The
+dev sandbox has the z-ai SDK configured, so glm-4-plus became the
+reference model through a local OpenAI-compatible SSE proxy
+(scripts/zai_openai_proxy.mjs: message mapping, schema-to-prompt,
+429 backoff, serialized throttling) plus a "zai" provider preset.
+
+Getting honest numbers out of it surfaced three real findings:
+
+1. **The capability probe under-reported json_schema for fenced-JSON
+   models.**  It stripped backticks with strip("`"), which cannot
+   handle ```json fences; the planner parses with strip_code_fences,
+   so the probe now does too.  glm-4-plus was wrongly reported
+   json_schema=false (found by the benchmark: the planner then ran
+   without the schema and produced 97/100 invalid plans - that first
+   run also hit 102 upstream 429s and was discarded as measuring the
+   rate limiter, not the model).
+2. **Frontier models invent their own tool-call syntax against the
+   text tool protocol.**  glm-4-plus emitted <tool_code> blocks with
+   YAML arguments; the protocol prompt now shows the exact one-line
+   JSON format with examples and states anything else is read as the
+   final message.  Single-goal live validation: 3/3 tasks, zero
+   repairs.
+3. **Reference-model worker failures are model-behavior, not engine
+   bugs**: H-01 (no handoff block on intermediate turns), H-03
+   (constraints paraphrased instead of copied verbatim), H-06 (facts
+   invented without sources - e.g. market figures hallucinated under
+   a no-web config; the engine is right to reject them, that is the
+   anti-hallucination contract doing its job).
+
+**3b planner pilot (enum-fix validation)**: qwen2.5:3b with the wire
+schema declaring role/type enums produces VALIDATING plans again -
+2/5 goals first-attempt, 3/5 after repair; every remaining failure is
+model-capability (V-01 truncation at max_tokens x2, V-11 hallucinated
+tools x2), ZERO enum/schema errors.  The pre-fix failure mode is gone
+(bench/results/pilot-planner-qwen2.5-3b.json).
+
+**Packaging fixes from the deepest non-privileged install check**
+(scripts/deep_install_verify.py): the deb now ships md5sums (dpkg -V
+can verify installed payloads) and root/root ownership instead of the
+CI user's uid.  privileged install itself (sudo dpkg -i / FUSE
+AppImage) still needs a target machine: the sandbox has no
+passwordless sudo and no /dev/fuse (physically verified).
+
+What genuinely remains for a human with the target machine:
+`sudo dpkg -i` / the FUSE-mounted AppImage launch, and reviewing the
+reference-model numbers against the PRD targets (the pipeline that
+produced them is in the repo; see the 0.4.3 bench results).
+
 ## Session: reproducible artifacts + execution smoke (after dab50be)
 
 Both desktop artifacts now build from ANY fresh checkout and are

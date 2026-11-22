@@ -56,9 +56,15 @@ WORKER_PROTOCOL = """WORKER PROTOCOL (fixed, version 1)
 - Cite every key fact with its source. Name every file you created under deliverables."""
 
 TEXT_TOOL_PROTOCOL = """TEXT TOOL PROTOCOL (this model cannot call tools natively)
-To use a tool, reply with exactly one line:
-<tool_call>{"name": "tool_name", "arguments": { ... }}</tool_call>
-The tool result comes back in the next message. When you have finished, send your final message ending with the <handoff> block."""
+To call a tool, reply with EXACTLY ONE LINE of JSON in this format:
+{"name": "list_files", "arguments": {}}
+Example with an argument:
+{"name": "search_files", "arguments": {"pattern": "report"}}
+The tool result comes back in the next message. This JSON line is the
+ONLY accepted tool-call format: do NOT use <tool_code> blocks, XML
+tags, YAML, markdown or any other syntax - anything else is read as
+your final message. When you have finished, send your final message
+ending with the <handoff> block."""
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 

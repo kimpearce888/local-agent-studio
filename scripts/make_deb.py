@@ -231,6 +231,15 @@ def scaffold(version: str, depends: str) -> None:
         f"Depends: {depends}\n"
         "Maintainer: Local Agent Studio project\n"
         f"Description: {DESC}\n")
+    # md5sums: every payload file, so `dpkg -V` can verify an
+    # installed package bit-for-bit (Debian packaging best practice;
+    # a hand-rolled DEBIAN/ tree does not get them automatically).
+    lines = []
+    for f in sorted(DEB_TREE.rglob("*")):
+        if f.is_file() and "DEBIAN" not in f.parts:
+            lines.append(f"{hashlib.md5(f.read_bytes()).hexdigest()}  "
+                         f"{f.relative_to(DEB_TREE).as_posix()}")
+    (ctrl / "md5sums").write_text("\n".join(lines) + "\n")
 
 
 def execution_smoke(unpacked_root: Path) -> str:
@@ -332,7 +341,10 @@ def main() -> int:
     out = DIST / f"local-agent-studio_{version}_amd64.deb"
     print(f"dpkg-deb --build -> {out.name}")
     r = subprocess.run(
-        ["dpkg-deb", "--build", str(DEB_TREE), str(out)],
+        # --root-owner-group: the archive must carry root:root, not the
+        # CI user (uid would not exist on user machines).
+        ["dpkg-deb", "--build", "--root-owner-group", str(DEB_TREE),
+         str(out)],
         capture_output=True, text=True)
     if r.returncode != 0:
         print("FAIL: dpkg-deb failed:", r.stderr)

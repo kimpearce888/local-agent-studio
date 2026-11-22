@@ -1,0 +1,71 @@
+{
+  "provider": {
+    "id": "zai",
+    "base_url": "http://127.0.0.1:8466",
+    "model": "glm-4-plus",
+    "note": "live server - real-model measurement; NOT the PRD reference model"
+  },
+  "capability_probe": {
+    "reachable": true,
+    "authenticated": true,
+    "models_listed": true,
+    "streaming": true,
+    "tool_calling": false,
+    "json_schema": false,
+    "token_counting": false,
+    "context_length": null,
+    "server_version": ""
+  },
+  "corpus": {
+    "goals": 100,
+    "first_attempt_valid": 0,
+    "valid_after_repair": 3,
+    "completed_without_help": 0,
+    "gate_pauses": 0,
+    "plan_failures": 97,
+    "run_failures": 3,
+    "mean_repair_rounds": 0.09
+  },
+  "resume_after_kill": {
+    "cycles": 5,
+    "resumed_ok": 0,
+    "failures": [
+      {
+        "goal": "g021",
+        "steps": 0,
+        "status": "plan-invalid"
+      },
+      {
+        "goal": "g010",
+        "steps": 0,
+        "status": "plan-invalid"
+      },
+      {
+        "goal": "g013",
+        "steps": 0,
+        "status": "plan-invalid"
+      },
+      {
+        "goal": "g016",
+        "steps": 0,
+        "status": "plan-invalid"
+      },
+      {
+        "goal": "g024",
+        "steps": 0,
+        "status": "plan-invalid"
+      }
+    ]
+  },
+  "cap": {
+    "status": "failed",
+    "cap_reached": true,
+    "work_after_cap": 0,
+    "model_calls": 0
+  },
+  "network": {
+    "status": "succeeded",
+    "outbound_attempts": []
+  },
+  "engine_gates_passed": true
+}

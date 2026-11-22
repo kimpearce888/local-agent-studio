@@ -16,6 +16,7 @@ from las.modules.providers.base import (
     Adapter, CapabilityRecord, ChatRequest, Message, ProviderError, ToolDef,
     safe_json_loads,
 )
+from las.modules.handoffs import strip_code_fences
 from las.modules.providers.presets import DETECT_PORTS, PRESETS
 
 TINY_SCHEMA = {
@@ -88,7 +89,11 @@ def probe(adapter: Adapter, model: str, provider_id: str = "") -> CapabilityReco
                 params={"max_tokens": 20})):
             if ev.kind == "text_delta":
                 text += ev.text
-        parsed = safe_json_loads(text.strip().strip("`"))
+        # The planner parses replies with strip_code_fences; the probe
+        # must measure the same thing, or fenced-JSON models (GPT, GLM,
+        # Claude all do it) get json_schema under-reported and the
+        # planner then runs without the schema.
+        parsed = safe_json_loads(strip_code_fences(text))
         caps.json_schema = isinstance(parsed, dict) and parsed.get("ok") is True
     except ProviderError:
         pass

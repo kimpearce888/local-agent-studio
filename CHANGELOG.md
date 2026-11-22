@@ -166,6 +166,34 @@ not follow-ups.
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
 
+## [0.4.3] - 2026-11-22
+
+- **Fixed: the capability probe under-reported json_schema for models
+  that reply with fenced JSON.**  The probe parsed the schema test
+  with a bare backtick strip, which cannot handle ```json fences
+  (GPT, GLM and Claude all fence); the planner parses with
+  strip_code_fences, so the probe now measures the same thing.  Found
+  by the reference-model benchmark: glm-4-plus was wrongly reported
+  json_schema=false and the planner then ran without the schema.
+- **Hardened the text tool protocol prompt.**  Reference-model runs
+  showed frontier models inventing their own tool-call syntax
+  (<tool_code> blocks with YAML arguments) against the old one-line
+  instruction; the prompt now shows the exact JSON format with
+  examples and states that anything else is read as the final
+  message.  Single-goal validation against the live model: 3/3 tasks,
+  zero repairs.
+- **Packaging: the deb now ships md5sums and root/root ownership**
+  (dpkg -V can verify an installed payload; the archive no longer
+  carries the CI user's uid).  Found by the deepest non-privileged
+  install verification (scripts/deep_install_verify.py: md5sums
+  coverage, ownership, modes, maintainer scripts, desktop entry
+  resolution, Depends check, AppImage/deb payload parity).
+- **zai provider preset + reference-model benchmark methodology**:
+  scripts/zai_openai_proxy.mjs is a local OpenAI-compatible SSE proxy
+  over the z-ai SDK (429 backoff + serialized throttling; the first
+  benchmark run hit 102 upstream 429s and was discarded as measuring
+  the rate limiter, not the model).
+
 ## [0.4.2] - 2026-11-22
 
 - **Fixed: run() over an already-failed run never terminated**

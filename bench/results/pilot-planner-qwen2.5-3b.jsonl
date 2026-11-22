@@ -1,0 +1,5 @@
+{"goal": "E-bike market brief", "kind": "gated", "valid": true, "repair_rounds": 1, "issues": []}
+{"goal": "E-bike market brief", "kind": "gated", "valid": false, "repair_rounds": 3, "issues": ["V-01: The planner reply is not JSON in the expected format."]}
+{"goal": "E-bike market brief", "kind": "gated", "valid": true, "repair_rounds": 0, "issues": []}
+{"goal": "E-bike market brief", "kind": "gated", "valid": false, "repair_rounds": 3, "issues": ["V-11: t4 asks for a tool that does not exist: revise_file.", "V-11: t5 asks for a tool that does not exist: submit_for_approval.", "V-01: The plan was truncated at task t4; fix it in the editor."]}
+{"goal": "E-bike market brief", "kind": "clean", "valid": true, "repair_rounds": 0, "issues": []}

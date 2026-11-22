@@ -72,8 +72,19 @@ GENERIC = Preset(
     notes="The capability probe decides what is used.",
 )
 
+ZAI = Preset(
+    id="zai", label="Z.AI reference (local SDK proxy)",
+    default_base_url="http://127.0.0.1:8466",
+    auth="none",
+    notes="Reference-model endpoint: a local OpenAI-compatible proxy "
+          "over the z-ai SDK (scripts/zai-proxy in the dev sandbox).  "
+          "The transport provides no native tools and no grammar-"
+          "enforced JSON; the capability probe reports what the model "
+          "actually does through it.",
+)
+
 PRESETS: dict[str, Preset] = {
-    p.id: p for p in (LM_STUDIO, UNSLOTH, OLLAMA, LLAMA_CPP, VLLM, GENERIC)
+    p.id: p for p in (LM_STUDIO, UNSLOTH, OLLAMA, LLAMA_CPP, VLLM, ZAI, GENERIC)
 }
 
 # Ports the setup wizard probes (spec S1 step 2): one unauthenticated
