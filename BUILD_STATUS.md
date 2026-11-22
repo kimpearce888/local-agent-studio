@@ -344,6 +344,41 @@ Test totals: Rust 94 green (69 las-core lib incl. 15 tools + 4
 gate/loop integration, 6 acceptance, 19 kittest UI); Python 313 OK
 headless (skips recorded honestly).
 
+## CI hardening + flake investigation (after 7b21a65)
+
+- **The Rust workspace is now IN CI** (was Python-only): a `rust`
+  job on stable runs `cargo test --workspace --locked` (engine,
+  parity, acceptance, headless egui_kittest UI) plus a release
+  build of the desktop shell.  First run (32) was red: the Python
+  engine migration fixture was excluded by the blanket `*.db`
+  gitignore rule, so the two migration tests passed locally and
+  failed on every fresh checkout.  The fixture is now committed
+  with an explicit gitignore exception; the rust job is green in
+  runs 33-36.
+- **A regression of ours, caught by CI (run 34)**: the crash-test
+  insertion in 2fd8e50 split `test_events_after_seq_polling` from
+  its `@skipUnless(providers.mock)` decorator (the decorator
+  attached to the NEW test), so in the providers.mock removal copy
+  the events test ran undecorated and failed with KeyError
+  'run_id'.  Fixed in 6a4d58b; all three removal verifications pass
+  locally again.
+- **Open flake (runs 33 and 35, 3.12 job, removal-copy suites)**:
+  `test_run_end_to_end_events`' background run stayed at status
+  'running' with 0 tokens for the whole 60s poll budget - the run
+  thread leaves no exception, so it is blocked or spinning.  It
+  hit the reporting copy once and the selftest copy once; the main
+  suite on the same job passes every time.  100 local iterations
+  of the exact failing sequence (60 multi-core, 40 pinned to one
+  core, CPython 3.12.16) did not reproduce it.  Defenses shipped:
+  the API run coordinator now records a run thread crash as a
+  `run.failed` event (RUN-THREAD-CRASHED) instead of leaving the
+  run stuck at 'running' forever (with a regression test), and the
+  test dumps every thread's stack into its failure message when
+  the 60s budget expires - the next CI occurrence pinpoints the
+  stuck line (runs 33/35 predate the working dump; run 35's first
+  attempt crashed on StringIO.fileno, fixed in 72486c8).
+- Run 36 (72486c8): all four jobs green.
+
 ## Exact next engineering action
 
 None blocking for v0.4.0 - the P0 scope is built, tested and
