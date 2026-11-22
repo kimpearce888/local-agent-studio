@@ -101,31 +101,52 @@ def shared_depends(binary: Path) -> str:
             continue
         right = line.split("=>", 1)[1]
         resolved = right.split("(")[0].strip()
-        # usrmerge: dpkg records /usr/lib/... but ldd reports
-        # through the /lib symlink; searching the SHORT name
-        # instead hits wrong-arch multilib packages (CI caught
-        # libc6-i386 creeping in that way).
-        if resolved.startswith("/lib/"):
-            resolved = "/usr/lib/" + resolved[len("/lib/"):]
         if not resolved.startswith("/"):
             continue
-        q = subprocess.run(["dpkg", "-S", resolved],
-                           capture_output=True, text=True)
-        if q.returncode == 0 and ":" in q.stdout:
-            # Trim the multiarch qualifier dpkg reports.
-            pkg = q.stdout.split(":")[0].strip()
-            if pkg not in pkgs:
-                pkgs.append(pkg)
-    # Versioned floors for the toolchain runtime libraries, derived
-    # from the binary itself (build on the OLDEST distro you ship
-    # to, or the floor silently rises - caught by re-verifying the
-    # artifact on a glibc-older machine).
-    for prefix, pkg in (("GLIBC", "libc6"),
-                        ("GCC", "libgcc-s1")):
+        # Distro dpkg databases disagree on usrmerge bookkeeping:
+        # Debian 13 records /usr/lib/..., ubuntu-22.04 /lib/...,
+        # and ldd reports through the /lib symlink.  Try both path
+        # forms, then the short name filtered to x86_64 (a bare
+        # short-name search hits wrong-arch multilib packages -
+        # CI caught libc6-i386 that way).
+        swapped = ("/usr/lib/" + resolved[len("/lib/"):]
+                   if resolved.startswith("/lib/")
+                   else "/lib/" + resolved[len("/usr/lib/"):]
+                   if resolved.startswith("/usr/lib/") else None)
+        short = resolved.rsplit("/", 1)[-1]
+        pkg = None
+        for cand in (resolved, swapped):
+            if cand is None:
+                continue
+            q = subprocess.run(["dpkg", "-S", cand],
+                               capture_output=True, text=True)
+            if q.returncode == 0 and ":" in q.stdout:
+                pkg = q.stdout.split(":")[0].strip()
+                break
+        if pkg is None:
+            q = subprocess.run(["dpkg", "-S", short],
+                               capture_output=True, text=True)
+            for l in q.stdout.splitlines():
+                p, _, path = l.partition(": ")
+                if "x86_64-linux-gnu" in path:
+                    pkg = p.split(":")[0].strip()
+                    break
+        if pkg and pkg not in pkgs:
+            pkgs.append(pkg)
+    # Versioned floors for the toolchain runtime libraries, ALWAYS
+    # included (the binary links libc/libgcc by construction),
+    # derived from the symbol versions it actually requires -
+    # build on the OLDEST distro you ship to, or the floor
+    # silently rises; re-verify the artifact on a glibc-older
+    # machine to catch that.
+    for pkg, prefix in (("libc6", "GLIBC"),
+                        ("libgcc-s1", "GCC")):
+        floor = _max_symbol_version(binary, prefix)
+        entry = f"{pkg} (>= {floor})" if floor else pkg
         if pkg in pkgs:
-            floor = _max_symbol_version(binary, prefix)
-            if floor:
-                pkgs[pkgs.index(pkg)] = f"{pkg} (>= {floor})"
+            pkgs[pkgs.index(pkg)] = entry
+        else:
+            pkgs.insert(0, entry)
     # The dlopen'd set (winit X11 + xkbcommon-x11 + wgpu's EGL and
     # Vulkan loaders); libxcb-xkb1 rides along with
     # libxkbcommon-x11-0 but is listed for completeness.
