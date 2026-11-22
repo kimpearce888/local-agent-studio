@@ -632,6 +632,41 @@ far as physics allows:
   on a real desktop and a FUSE mount - both need what this sandbox
   physically lacks.
 
+## Session: v0.4.1 - the benchmark session's fixes shipped as a release
+
+- **The real-model benchmark found a production defect and it is
+  FIXED**: the planner's wire schema declared role/type as bare
+  strings while the validator enforces ROLES/TASK_TYPES - measured
+  as 'qwen2.5:3b produced well-formed tasks and failed ONLY on
+  invented roles'.  The schema now declares both enums; any
+  json_schema-capable server grammar-rejects invalid values at
+  generation time.  317 tests green; GUI suite green under Xvfb.
+- **v0.4.1 released**: versions unified (pyproject, las.__version__,
+  Cargo workspace, artifact filename checks), the settings UI test
+  now asserts the version from CARGO_PKG_VERSION instead of a
+  hardcoded number.  CI run 56 green; the .deb and AppImage
+  download-back verified on this machine (execution smokes OK,
+  sha256 recorded in the release policy trail) and copied to
+  download/.
+- **verify_ci_artifacts.py hardened**: with an empty
+  LAS_SMOKE_LIBDIR the smoke crashed on `Path("").parents[1]` (Path
+  of "" resolves to cwd, which exists) instead of running plain -
+  fixed to require a non-empty value.
+- **Worker-phase measurement: BLOCKED BY A REAL FINDING.**  The
+  live-worker run (scripted valid plan + qwen2.5:1.5b executing the
+  tasks) was killed by the OOM killer THREE times on this 4GB box -
+  the python process reaches ~1.86GB rss inside a SINGLE goal,
+  despite the attempt caps (max_turns=25, max_tool_calls=100,
+  cap_tokens_run=2M) all being in place.  The mock never rambles,
+  so this path was never exercised: with a real non-converging
+  model, SOMETHING in the worker path grows unboundedly.  That is
+  exactly what a real-model benchmark exists to find, and it is the
+  next engineering action: reproduce under a memory guard
+  (ulimit -v + faulthandler; the guarded runner is
+  scripts/worker_one_goal.py), get the allocation traceback, and
+  cap it.  The 0.4.0-era measurement showed the same signature
+  (the 'exit 137' of the previous session was this same OOM kill).
+
 ## Exact next engineering action
 
 None blocking.  The P0 scope, the recorded implementable P1 list

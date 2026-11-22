@@ -119,7 +119,7 @@ def smoke(binary: Path) -> str:
                    "LAS_DATA_DIR": str(data_dir),
                    "DISPLAY": display,
                    "LIBGL_ALWAYS_SOFTWARE": "1"}
-            if Path(SMOKE_LIBDIR).exists():
+            if SMOKE_LIBDIR and Path(SMOKE_LIBDIR).exists():
                 env["LD_LIBRARY_PATH"] = (
                     f"{SMOKE_LIBDIR}:"
                     f"{env.get('LD_LIBRARY_PATH', '')}")
