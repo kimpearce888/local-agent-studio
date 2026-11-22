@@ -652,20 +652,26 @@ far as physics allows:
   LAS_SMOKE_LIBDIR the smoke crashed on `Path("").parents[1]` (Path
   of "" resolves to cwd, which exists) instead of running plain -
   fixed to require a non-empty value.
-- **Worker-phase measurement: BLOCKED BY A REAL FINDING.**  The
-  live-worker run (scripted valid plan + qwen2.5:1.5b executing the
-  tasks) was killed by the OOM killer THREE times on this 4GB box -
-  the python process reaches ~1.86GB rss inside a SINGLE goal,
-  despite the attempt caps (max_turns=25, max_tool_calls=100,
-  cap_tokens_run=2M) all being in place.  The mock never rambles,
-  so this path was never exercised: with a real non-converging
-  model, SOMETHING in the worker path grows unboundedly.  That is
-  exactly what a real-model benchmark exists to find, and it is the
-  next engineering action: reproduce under a memory guard
-  (ulimit -v + faulthandler; the guarded runner is
-  scripts/worker_one_goal.py), get the allocation traceback, and
-  cap it.  The 0.4.0-era measurement showed the same signature
-  (the 'exit 137' of the previous session was this same OOM kill).
+- **Worker-phase measurement: found, root-caused, FIXED and
+  verified.**  The live-worker run was OOM-killed three times
+  (~1.86-3.2GB rss inside a single goal) while every attempt cap
+  held.  A deterministic in-process repro (scripts/repro_worker_oom.py:
+  a rambling adapter, no HTTP, no model server) reproduced the kill
+  in seconds and bisected it to ONE line: step() returned the raw
+  run status "failed" as the result kind, which run()'s break list
+  does not contain (it expects "run_failed") - so run() over an
+  already-failed run spun forever appending StepResults until the
+  OOM killer took the process.  The kill/resume benchmark hits
+  exactly this path whenever the live model fails a task before
+  the kill.  Fixed in driver.py (status->kind mapping); regression
+  test added (tests/test_runstate.py, TestRunOnFailedRun); the
+  repro completes in 0.0s at 26MB flat where it previously OOM'd
+  at 3.2GB.  Full suite: 318 OK.  CONFIRMED against the live model
+  after the fix: the exact kill-mode measurement that OOM'd three
+  times now completes cleanly
+  (bench/results/worker-real-kill-qwen2.5-1.5b-0.4.2.json - the
+  rambling 1.5b fails the first task and the resume driver returns
+  immediately; honest numbers, no hang).
 
 ## Exact next engineering action
 
