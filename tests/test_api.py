@@ -194,9 +194,13 @@ class TestRuns(ApiTestBase):
                                      body={"plan": self._plan()})
             self.assertEqual(status, 200, body)
             run_id = body["run_id"]
-            for _ in range(100):   # 5s: the thread records fast
+            for _ in range(100):   # 5s: queued -> running -> failed
                 status, state = self.call(f"/runs/{run_id}")
-                if state.get("status") != "running":
+                # Poll until a TERMINAL state: breaking on anything
+                # != 'running' races the thread (the run sits at
+                # 'queued' until the crash is recorded, so an early
+                # poll would break immediately and read 'queued').
+                if state.get("status") not in ("queued", "running"):
                     break
                 time.sleep(0.05)
         self.assertEqual(state["status"], "failed", state)
