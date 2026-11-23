@@ -506,6 +506,48 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.9 - handoff repair budgeted by chain length (the rerun's NEXT item, engine half shipped)
+
+The measured NEXT item from the rerun record, engine half done and
+shipped (2e30bb8, CI green); the re-measure half is blocked by a fresh
+429 window and has an exact resume path.
+
+- **The change (spec 5.5 amended)**: a bad handoff keeps its one
+  repair round on short chains and gains a second on chains of six or
+  more tasks, capped at three (the planner's ceiling, PLN-2).  The
+  base is configurable - DriverConfig.handoff_repair_rounds, default
+  1 - recorded in run.created and restored on resume (the
+  wall_task_seconds pattern, audit item 18).
+- **Driver, measured**: the two v0.4.8 rerun failures were late-stage
+  HANDOFF-INVALIDs on 8- and 10-task chains where the single repair
+  round was not enough; short chains never needed a second.  The bonus
+  keys on chain length, not bench family - the engine does not know
+  families.
+- **Tests**: five scheduler tests pin the budget (long-chain second
+  round recovers; cap at three; budget-exhausted fails; short chain
+  stays one round; configured rounds honored without the bonus) plus
+  two config-recording tests.  Suite: Python 346 OK (+7), Rust 141
+  green, las-desktop release build green at 0.4.9 --locked; CI green
+  on 2e30bb8 (removed the rust toolchain from this sandbox cycle -
+  reinstalled to verify).
+- **Docs/versions**: product-spec 5.5 + the 5.7 failure table + the
+  5.8 budget table, the prd repair paragraph and the PLAN risk table
+  amended; CHANGELOG 0.4.9 (folds the Unreleased e2e items); versions
+  unified at 0.4.9 (pyproject, las.__version__, Cargo workspace,
+  Cargo.lock).
+- **The REMEASURE of the two failed goals is BLOCKED, honestly**: the
+  upstream was healthy through the rerun's last traffic (18:07Z) and
+  throttled by the first probe after (~18:52Z), still hot at 20:06Z
+  across six paced probes (~15 min apart, the 0.4.7 discipline; the
+  probe's "15h+" label is the script's static authoring-time string,
+  not a measured duration).  Launcher ready and probe-guarded, results
+  to bench/results/v0.4.9-repair/:
+    python3 /home/z/my-project/scripts/bench_remeasure_repair.py start 2
+    python3 /home/z/my-project/scripts/bench_remeasure_repair.py start 4
+  (corpus indices 2 and 4, the exact rerun flags: --goals 10 --start
+  N --end N+1 --kills 0 --timeout 900, one live process).  NEXT
+  session: run both when the window lifts, append the numbers here.
+
 ## Session: the v0.4.8 benchmark rerun (post-429 results)
 
 The scheduled rerun (the 0.4.6/0.4.7 procedure) executed end to end
