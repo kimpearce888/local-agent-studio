@@ -506,6 +506,35 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.8 - the release-discipline audit (flake fixed, versions unified, rerun scheduled)
+
+A full-state audit on a fresh sandbox, nothing trusted from memory:
+
+- **CI history audited via the API**: 44 success / 28 failure all
+  time; every failure sits in the early period (last failing run 49,
+  2026-11-22T09:01Z) and the streak since is green - 24 consecutive
+  successful runs at the time of writing, including both of today's
+  pushes.  The "actions mostly failed" state is long repaired.
+- **A live 1-in-4 flake found and fixed**: the API run-thread-crash
+  test broke its poll on any status != 'running', racing the
+  coordinator (a run sits at 'queued' until the crash is recorded).
+  The loop now waits for a terminal state; 15/15 stable locally,
+  full suite 337 green.
+- **Version drift corrected (release gate)**: the Python engine was
+  0.4.4, the Rust workspace 0.4.3, while the changelog documented
+  0.4.5-0.4.7.  All unified at 0.4.8; PROGRESS.md's remaining-work
+  list (still v0.3.0-era, claiming the desktop shell BLOCKED)
+  refreshed to the audited truth.
+- **The 429 window re-measured**: still hot at 2026-11-23T01:00Z
+  (~15h; a tiny chat round-trip through a freshly started proxy
+  bounced off all five backoff attempts, upstream refusing with
+  "Too many requests").  The rerun is now scheduled, not manual: a
+  recurring probe fires every 30 minutes and, the moment the
+  upstream answers, runs the 0.4.6/0.4.7 procedure in bounded
+  corpus slices (never two live processes against the z-ai upstream
+  - the 0.4.6 lesson), records the results, updates these docs,
+  pushes and verifies CI.
+
 ## Session: v0.4.7 - the throttle guard (live-verified against a 14h+ 429 window)
 
 The account-wide 429 window did NOT lift with the session gap: the
@@ -943,6 +972,17 @@ fixes; the open item is a MODEL-side measurement, not engine work:
   measured working: workspace fixtures are read, file-sourced facts
   validate H-06, and a live model produced a fully valid four-field
   blocked handoff during diagnosis.
+
+Since v0.4.8 this rerun is SCHEDULED, not manual: a recurring probe
+(every 30 minutes) tests the upstream with one tiny chat round-trip
+through a freshly started proxy; the moment it answers, the corpus
+runs in bounded slices with the command below, the results are
+recorded in bench/results/, these docs update, and CI verifies the
+push.  If the window is still hot the probe costs one aborted
+round-trip (~3 minutes) and tries again half an hour later.
+
+    PYTHONPATH=. python3 -m bench --provider zai --model glm-4-plus \
+        --goals 10 --kills 2 --out bench/results
 
 The P0 scope, the recorded implementable P1 list and ALL audit
 residuals are built, tested and packaged; the three

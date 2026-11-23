@@ -351,32 +351,53 @@ telemetry and attachments (planning correctly refuses removal as core);
 - 22 GUI tests under Xvfb; 326 total green with a display, 304 headless
   (GUI classes skip cleanly). Released 0.3.0.
 
-## Remaining work (honest list)
+## Remaining work (honest list - refreshed 2026-11-23, release 0.4.8)
 
-- M1 items not feasible in this sandbox: nightly contract tests against
-  real servers (no LM Studio/Ollama available); the benchmark MEASUREMENT
-  (the harness is done - bench/ - and validated by the mock dry-run, but
-  the PRD targets are defined against the reference model). The
-  derived-summaries optimization is DONE
-  (continuation session 4): a run_summary table caches `list` rows per
-  run, refreshed only when new events appear (staleness by event seq);
-  `list` replays nothing on warm listings (0.2 ms vs 5 ms replay-everything
-  on a 20-run history; the gap grows with history size), delete_run drops
-  the row, and 5 tests pin cache-matches-replay and refresh-on-append.
-- M2 desktop shell: BLOCKED in this environment (no Rust toolchain); the
-  engine API it will consume is in place and tested.
-- M3/M4 items still open: MCP client (TLS-6), signed installers (DST-1)
-  and the replanning UI surface; attachments, OTLP export, run comparison
-  and re-planning itself are DONE engine-side (session 3). P1 tools
-  run_command and web_fetch already exist with allowlists from M0; their
-  detailed behavior, like RUN-10/RUN-11, is specified at the start of the
-  phases that deliver them (spec line 644) and is deliberately not
-  invented here.
+The v0.3.0-era list below is superseded (kept for history). Current
+truth, cross-checked against BUILD_STATUS.md and CI:
+
+- The P0 scope, the recorded P1 list and all 24 mandate-audit items
+  are built, tested and packaged (BUILD_STATUS.md carries the audit
+  table with code evidence).  M2 desktop shell: DONE - the egui
+  shell with the mandate's 14 areas ships in rust/crates/las-desktop
+  (141 Rust tests green in CI; kittest-verified headlessly here, the
+  CI artifacts job additionally runs a real Xvfb GUI smoke).
+- MCP client: DONE (stdio + Streamable HTTP + dynamic tool-schema
+  injection, three-layer filtering, UNTRUSTED labels).
+  Landlock-sandboxed run_command: DONE.  Versioned artifacts: DONE.
+  Automatic session rollover: DONE.  Provider-exact token
+  accounting: DONE.
+- The benchmark MEASUREMENT against the reference model remains the
+  one open item, and it is upstream-blocked, not engine-blocked: the
+  harness is complete and self-protecting (the throttle guard
+  aborts cleanly on a hot limit), the pipeline is proven end to end
+  against live servers (user-mode ollama capability tests; real
+  glm-4-plus runs - csv-summary COMPLETED without help on 0.4.5),
+  and the account-wide 429 window from the 0.4.6 sessions outlasted
+  15h+ (still hot at 2026-11-23T01:00Z).  Rerun procedure: the
+  BUILD_STATUS 0.4.6/0.4.7 sections; a scheduled probe reruns the
+  corpus the moment the window lifts.
+- Signed installers (DST-1): P1, deliberately staged with the first
+  commercial distribution per release-policy.md; not
+  release-blocking.
+- Privileged install on the target machine (sudo dpkg -i, FUSE
+  AppImage mount): verified rootless as far as sandbox physics
+  allow (dpkg --root, installed-binary Xvfb smoke,
+  --appimage-extract-and-run); the final privileged install needs
+  the user's machine.
 
 ## Handover notes (maintained continuously)
 
-- To run everything: `python3 -m unittest discover -s tests`;
-  `python3 -m las selftest`; `python3 -m las run <plan.json> --provider mock`.
-- Source of truth for requirements: `docs/prd.md`, `docs/product-spec.md`.
-- Architecture rules live in `DEPENDENCY_RULES.md` and are enforced by
-  `tests/test_architecture.py` + `tests/test_registry.py` once S2/S3 land.
+- Python reference engine: `python3 -m unittest discover -s tests`
+  (337 tests, one display-dependent skip); `python3 -m las selftest`;
+  GUI tests need Xvfb (HANDOVER.md).
+- Rust product engine: `cd rust && cargo test --workspace --locked`;
+  `cargo build --release -p las-desktop`.  CI runs the Python matrix,
+  the Rust workspace and the artifacts job on every push (audited
+  2026-11-23: 24 consecutive green runs).
+- Source of truth for requirements: `docs/prd.md`,
+  `docs/product-spec.md`, the delivery mandate, and BUILD_STATUS.md
+  (the audit table).
+- Architecture rules live in `DEPENDENCY_RULES.md` and are enforced
+  by `tests/test_architecture.py` + `tests/test_registry.py` +
+  `tools/removal_test.py` (all three run in CI).

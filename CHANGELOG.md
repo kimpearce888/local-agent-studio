@@ -5,10 +5,15 @@ follow semantic versioning. Documentation, this changelog and migration
 notes are release gates under the [release policy](docs/user/release-policy.md),
 not follow-ups.
 
-## [Unreleased]
+## [0.4.8] - 2026-11-23
 
 ### Fixed
 
+- **A 1-in-4 flake in the API crash test**: the run-thread-crash
+  test's poll loop broke on any status != 'running', but a run sits
+  at 'queued' until the crash is recorded - an early poll broke
+  immediately and read 'queued'.  The loop now waits for a TERMINAL
+  state (verified 15/15 locally; full suite 337 green).
 - **The CI run flake (runs 33/35/38/39)**: the Python store shared
   one sqlite3 connection between the loopback API threads and the
   run-coordinator thread without serialization
@@ -165,6 +170,15 @@ not follow-ups.
   (and labels the basis - conservative, confirmed-safe, or
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
+- **Version discipline restored**: the Python engine had drifted to
+  0.4.4 and the Rust workspace to 0.4.3 while this changelog
+  documented 0.4.5-0.4.7 - a release-gate violation of the project's
+  own policy.  pyproject, `las.__version__`, the Rust workspace
+  manifest and Cargo.lock are unified at 0.4.8 with this release,
+  and PROGRESS.md's remaining-work list is refreshed to the
+  audited truth (M2 desktop shell DONE, MCP/Landlock/artifacts/
+  rollover DONE; the only open item is the upstream-blocked
+  reference-model benchmark measurement).
 
 ## [0.4.7] - 2026-11-23
 
