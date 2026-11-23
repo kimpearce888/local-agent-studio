@@ -1,0 +1,14 @@
+provider 'zai' at http://127.0.0.1:8466, model 'glm-4-plus'
+server detection: none of the well-known ports answered (continuing anyway)
+chat round-trip: ok (the upstream answers live traffic)
+capability probe (13.4s): reachable=True authenticated=True models_listed=True streaming=True tool_calling=False json_schema=True token_counting=False server_version=''
+corpus: 0 goals (indices 10:10) against the live model (this measures the MODEL, not the harness)
+kill/resume: 2 cycles against the live model
+Corpus (LIVE 'glm-4-plus'): 0 goals
+  valid first attempt:  0/0 (PRD >= 90% is a REFERENCE-model target)
+  valid after repair:   0/0 (PRD >= 99% is a REFERENCE-model target)
+  mean repair rounds:   0
+  done without help:    0/0  [blocked: 0, gate pauses: 0, plan failures: 0, run failures: 0]
+Forced kills: 0/2 resumed cleanly  (failures: [{'goal': 'g021', 'steps': 0, 'status': 'plan-invalid'}, {'goal': 'g010', 'steps': 5, 'status': 'failed'}])
+Engine gates (mock-validated): PASSED
+Results: /home/z/my-project/local-agent-studio/bench/results/rerun-0.4.8/kills-2/bench-real-20261123T180707Z.json

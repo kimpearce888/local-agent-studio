@@ -1,0 +1,55 @@
+{
+  "provider": {
+    "id": "zai",
+    "base_url": "http://127.0.0.1:8466",
+    "model": "glm-4-plus",
+    "note": "live server - real-model measurement; NOT the PRD reference model"
+  },
+  "capability_probe": {
+    "reachable": true,
+    "authenticated": true,
+    "models_listed": true,
+    "streaming": true,
+    "tool_calling": false,
+    "json_schema": true,
+    "token_counting": false,
+    "context_length": null,
+    "server_version": ""
+  },
+  "corpus": {
+    "goals": 10,
+    "first_attempt_valid": 10,
+    "valid_after_repair": 10,
+    "completed_without_help": 4,
+    "blocked_runs": 4,
+    "gate_pauses": 0,
+    "plan_failures": 0,
+    "run_failures": 2,
+    "mean_repair_rounds": 0.0
+  },
+  "resume_after_kill": {
+    "cycles": 2,
+    "resumed_ok": 0,
+    "failures": [
+      {
+        "goal": "g021",
+        "steps": 0,
+        "status": "plan-invalid"
+      },
+      {
+        "goal": "g010",
+        "steps": 5,
+        "status": "failed"
+      }
+    ]
+  },
+  "engine_gates_passed": true,
+  "note": "rerun of the 0.4.6/0.4.7 procedure in bounded slices (single live process at a time; account-wide 429 window waited out, probed every 30 minutes)",
+  "slices": {
+    "goals-0-3": "/home/z/my-project/local-agent-studio/bench/results/rerun-0.4.8/goals-0-3/bench-real-20261123T164409Z.json",
+    "goals-3-6": "/home/z/my-project/local-agent-studio/bench/results/rerun-0.4.8/goals-3-6/bench-real-20261123T170613Z.json",
+    "goals-6-10": "/home/z/my-project/local-agent-studio/bench/results/rerun-0.4.8/goals-6-10/bench-real-20261123T173452Z.json",
+    "kills-2": "/home/z/my-project/local-agent-studio/bench/results/rerun-0.4.8/kills-2/bench-real-20261123T180707Z.json"
+  },
+  "aggregated_at": "2026-11-23T18:08:05Z"
+}
