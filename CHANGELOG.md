@@ -5,6 +5,30 @@ follow semantic versioning. Documentation, this changelog and migration
 notes are release gates under the [release policy](docs/user/release-policy.md),
 not follow-ups.
 
+## [Unreleased]
+
+### Fixed
+
+- **The GUI run session never reported completion** (found by the
+  v0.4.8 end-to-end demo, not by any test): the session worker's
+  `_post("finished", kind="run_succeeded")` collided with its own
+  parameter named `kind` and raised TypeError on EVERY run
+  completion - the engine finished the run but the UI never received
+  the finished event and the status chip stuck at 'running'.
+  Parameter renamed; two regression tests pin the event contract and
+  a full scripted RunSession run (tests/test_session_runner.py).
+
+### Added
+
+- **A reproducible end-to-end demo** (scripts/e2e-demo/): two small
+  workflows created and solved through the real CLI and the real
+  desktop GUI, offline via the built-in mock provider - one sales-CSV
+  summary with a goal attachment and a human approval gate, one
+  announcement published behind a gate.  CLI transcripts and six GUI
+  screenshots captured under Xvfb (download/e2e-demo/).  The demo
+  doubles as a manual test pass; it is what caught the session bug
+  above.
+
 ## [0.4.8] - 2026-11-23
 
 ### Fixed

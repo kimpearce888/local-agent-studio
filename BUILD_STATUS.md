@@ -506,6 +506,38 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.8 e2e - the program tested like a user (and what it caught)
+
+A full end-to-end pass on the shipped code, no test doubles of the
+product: two workflows created and solved through the real CLI and
+the real tkinter desktop app, offline via the built-in mock provider
+(upstream z-ai still account-level 429 at test time - every request
+refused; the offline mode is the product's own designed answer for
+exactly this).
+
+- CLI flow, logged step by step (scripts/e2e-demo/demo-logs/):
+  provider setup, goal -> valid plan with the sales.csv ATTACHMENT
+  imported into the run workspace (TLS-8 path exercised for real),
+  t1 computed totals, the run paused at t2's approval gate, approve
+  with a required reason (spec 7.4), resume, Run succeeded 2/2, and
+  the produced summary.md's totals match the input CSV exactly.
+- GUI flow under Xvfb, six ffmpeg screenshots: runs screen, goal
+  typed, generated plan in the Studio, the GATE DIALOG auto-opening
+  with the task context + shown-hash, run view succeeded, runs list
+  final.  Deliverables read from the run's workspace jail.
+- **A real bug found and fixed**: the GUI run-session worker posted
+  its finished event with `_post("finished", kind=...)` against a
+  parameter also named kind -> TypeError on every completion; the UI
+  never heard the run ended.  Pinned by tests/test_session_runner.py
+  (suite: 339 green).
+- Witnessed working: the handoff-repair nudge (a broken handoff was
+  rejected citing the exact H-rule, then corrected next turn) and the
+  mock provider's honest capability probe (streams/tools/json_schema
+  reported Fail on the scripted backend).
+
+Deliverables: download/e2e-demo/ (README + screenshots + transcripts +
+artifacts).  Demo scripts are committed under scripts/e2e-demo/.
+
 ## Session: v0.4.8 - the release-discipline audit (flake fixed, versions unified, rerun scheduled)
 
 A full-state audit on a fresh sandbox, nothing trusted from memory:

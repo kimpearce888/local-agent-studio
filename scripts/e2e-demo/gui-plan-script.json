@@ -1,0 +1,68 @@
+[
+ {
+  "json": {
+   "title": "Widget C announcement",
+   "constraints": [
+    {
+     "id": "c1",
+     "text": "You must keep every sentence under 12 words.",
+     "authority": "user",
+     "scope": "all"
+    },
+    {
+     "id": "c2",
+     "text": "Never mention unreleased features.",
+     "authority": "user",
+     "scope": "all"
+    },
+    {
+     "id": "c3",
+     "text": "Publishing the announcement requires approval.",
+     "authority": "user",
+     "scope": "all"
+    }
+   ],
+   "tasks": [
+    {
+     "id": "t1",
+     "type": "task",
+     "title": "Draft the two-line announcement",
+     "instructions": "Draft a two-line product announcement for Widget C. Keep every sentence under 12 words. Write the draft to draft.txt.",
+     "needs": [],
+     "expected_output": "draft.txt with the two-line announcement",
+     "constraints": [
+      "c1",
+      "c2"
+     ],
+     "role": "worker",
+     "tools": [
+      "write_file",
+      "read_file"
+     ],
+     "gate_before": false
+    },
+    {
+     "id": "t2",
+     "type": "task",
+     "title": "Publish announcement.md (approval required)",
+     "instructions": "Read the draft produced by t1 and publish it as announcement.md, keeping every sentence under 12 words.",
+     "needs": [
+      "t1"
+     ],
+     "expected_output": "announcement.md, published",
+     "constraints": [
+      "c1",
+      "c2",
+      "c3"
+     ],
+     "role": "worker",
+     "tools": [
+      "read_file",
+      "write_file"
+     ],
+     "gate_before": true
+    }
+   ]
+  }
+ }
+]

@@ -1,0 +1,10 @@
+demo-mock / mock-model
+  reachable        Pass
+  authenticated    Pass
+  models_listed    Pass
+  streaming        Fail
+  tool_calling     Fail
+  json_schema      Fail
+  token_counting   Pass
+  router_mode      Fail
+  context_length  8192

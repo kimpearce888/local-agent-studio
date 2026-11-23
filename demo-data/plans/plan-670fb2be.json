@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "id": "plan-670fb2be",
+  "title": "Sales CSV summary",
+  "goal": "Read the attached sales.csv, compute the total units sold and the total revenue, and write summary.md with both totals and the best-selling product. You must cite sales.csv for every figure. Never invent numbers. Writing the public summary requires approval.",
+  "created_at": "2026-11-23T02:44:22Z",
+  "options": {
+    "granularity": "normal",
+    "max_tasks": 30,
+    "stage_barriers": false
+  },
+  "constraints": [
+    {
+      "id": "c1",
+      "text": "You must cite sales.csv for every figure.",
+      "state": "active",
+      "prerequisite": null,
+      "authority": "user",
+      "fallback": null,
+      "scope": "all",
+      "origin": "goal",
+      "source_span": [
+        149,
+        190
+      ]
+    },
+    {
+      "id": "c2",
+      "text": "Never invent numbers.",
+      "state": "active",
+      "prerequisite": null,
+      "authority": "user",
+      "fallback": null,
+      "scope": "all",
+      "origin": "goal",
+      "source_span": [
+        191,
+        212
+      ]
+    },
+    {
+      "id": "c3",
+      "text": "Writing the public summary requires approval.",
+      "state": "active",
+      "prerequisite": null,
+      "authority": "user",
+      "fallback": null,
+      "scope": "all",
+      "origin": "goal",
+      "source_span": [
+        213,
+        258
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "type": "task",
+      "title": "Compute the sales totals from sales.csv",
+      "instructions": "Read sales.csv from the workspace. Compute the total units sold, the total revenue and the best-selling product by units. Write the three results to totals.json.",
+      "needs": [],
+      "expected_output": "totals.json with total_units, total_revenue and top_product",
+      "constraints": [
+        "c1",
+        "c2"
+      ],
+      "role": "worker",
+      "model": null,
+      "params": {},
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "limits": {},
+      "gate_before": false
+    },
+    {
+      "id": "t2",
+      "type": "task",
+      "title": "Write summary.md (approval required)",
+      "instructions": "Using t1's results, write summary.md with the total units, the total revenue and the best-selling product. Cite sales.csv for every figure.",
+      "needs": [
+        "t1"
+      ],
+      "expected_output": "summary.md with the verified totals",
+      "constraints": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "role": "worker",
+      "model": null,
+      "params": {},
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "limits": {},
+      "gate_before": true
+    }
+  ]
+}

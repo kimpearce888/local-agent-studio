@@ -1,0 +1,4 @@
+run run-20261123-024423-10dbfca70262: succeeded
+plan: plan-670fb2be  title: Sales CSV summary
+  t1       succeeded          Compute the sales totals from sales.csv
+  t2       succeeded          Write summary.md (approval required)

@@ -1,0 +1,3 @@
+Resuming run-20261123-024423-10dbfca70262
+  task t2: succeeded (1480+596 tokens)
+Run succeeded (2/2 tasks, 3771 tokens)

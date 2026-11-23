@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "id": "plan-0808bb48",
+  "title": "Widget C announcement",
+  "goal": "Draft a two-line product announcement for Widget C, then publish it as announcement.md. You must keep every sentence under 12 words. Never mention unreleased features. Publishing the announcement requires approval.",
+  "created_at": "2026-11-23T02:51:55Z",
+  "options": {
+    "granularity": "normal",
+    "max_tasks": 30,
+    "stage_barriers": false
+  },
+  "constraints": [
+    {
+      "id": "c1",
+      "text": "You must keep every sentence under 12 words.",
+      "state": "active",
+      "prerequisite": null,
+      "authority": "user",
+      "fallback": null,
+      "scope": "all",
+      "origin": "goal",
+      "source_span": [
+        88,
+        132
+      ]
+    },
+    {
+      "id": "c2",
+      "text": "Never mention unreleased features.",
+      "state": "active",
+      "prerequisite": null,
+      "authority": "user",
+      "fallback": null,
+      "scope": "all",
+      "origin": "goal",
+      "source_span": [
+        133,
+        167
+      ]
+    },
+    {
+      "id": "c3",
+      "text": "Publishing the announcement requires approval.",
+      "state": "active",
+      "prerequisite": null,
+      "authority": "user",
+      "fallback": null,
+      "scope": "all",
+      "origin": "goal",
+      "source_span": [
+        168,
+        214
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "t1",
+      "type": "task",
+      "title": "Draft the two-line announcement",
+      "instructions": "Draft a two-line product announcement for Widget C. Keep every sentence under 12 words. Write the draft to draft.txt.",
+      "needs": [],
+      "expected_output": "draft.txt with the two-line announcement",
+      "constraints": [
+        "c1",
+        "c2"
+      ],
+      "role": "worker",
+      "model": null,
+      "params": {},
+      "tools": [
+        "write_file",
+        "read_file"
+      ],
+      "limits": {},
+      "gate_before": false
+    },
+    {
+      "id": "t2",
+      "type": "task",
+      "title": "Publish announcement.md (approval required)",
+      "instructions": "Read the draft produced by t1 and publish it as announcement.md, keeping every sentence under 12 words.",
+      "needs": [
+        "t1"
+      ],
+      "expected_output": "announcement.md, published",
+      "constraints": [
+        "c1",
+        "c2",
+        "c3"
+      ],
+      "role": "worker",
+      "model": null,
+      "params": {},
+      "tools": [
+        "read_file",
+        "write_file"
+      ],
+      "limits": {},
+      "gate_before": true
+    }
+  ]
+}

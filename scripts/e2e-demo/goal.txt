@@ -1,0 +1,1 @@
+Read the attached sales.csv, compute the total units sold and the total revenue, and write summary.md with both totals and the best-selling product. You must cite sales.csv for every figure. Never invent numbers. Writing the public summary requires approval.

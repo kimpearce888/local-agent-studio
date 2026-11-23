@@ -1,0 +1,7 @@
+Attachments in workspace: sales.csv
+Run run-20261123-024423-10dbfca70262 started (2 tasks)
+  task t1: succeeded (1391+304 tokens)
+  task t2: waiting at a gate (user)
+GATE-REQUIRED: This task needs your approval before it runs.
+Fix: studio approve run-20261123-024423-10dbfca70262 t2 --reason "..."
+(run id: run-20261123-024423-10dbfca70262)

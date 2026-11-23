@@ -118,8 +118,15 @@ class RunSession(threading.Thread):
 
     # -- worker side ---------------------------------------------------------
 
-    def _post(self, kind: str, **payload) -> None:
-        self.events.put((kind, payload))
+    def _post(self, event_kind: str, **payload) -> None:
+        # The parameter is named event_kind, not kind: the 'finished'
+        # event carries a payload field ALSO named kind (the run's
+        # terminal status), and a positional/keyword clash raised
+        # TypeError on every session completion - found by the v0.4.8
+        # end-to-end GUI demo: the run succeeded in the engine but the
+        # UI never received 'finished' and the status chip stuck at
+        # 'running'.
+        self.events.put((event_kind, payload))
 
     def _await_decision(self, valid: set) -> tuple[str, dict]:
         """Block for a decision, discarding stale actions that belonged

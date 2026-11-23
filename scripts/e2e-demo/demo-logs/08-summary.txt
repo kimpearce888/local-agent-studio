@@ -1,0 +1,7 @@
+# Sales summary
+
+Total units sold: **475** (sales.csv).
+
+Total revenue: **4302.25** (sales.csv).
+
+Best-selling product by units: **Widget C** with 210 units (sales.csv).

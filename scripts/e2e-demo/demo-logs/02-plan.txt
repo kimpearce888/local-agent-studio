@@ -1,0 +1,4 @@
+Attached 1 file(s) to plan plan-670fb2be.
+Plan: valid  (repair rounds: 0)
+  2 tasks, 3 constraints
+Saved to demo-plan.json
