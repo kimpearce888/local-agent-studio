@@ -506,6 +506,34 @@ Test totals: Rust 141 green (115 las-core lib, 6 acceptance, 20
 kittest UI) workspace `--locked`; Python 317 passed / 22 skipped.
 
 
+## Session: v0.4.7 - the throttle guard (live-verified against a 14h+ 429 window)
+
+The account-wide 429 window did NOT lift with the session gap: the
+chat endpoint and the z-ai CLI functions (web_search) both refused
+with "Too many requests" - so the limit is account-level, not
+endpoint-level, and consistent with a daily quota exhaustion from the
+two real-model benchmark sessions.  Live polling over 25 minutes (3
+single-request probes at 7-8 minute intervals) all bounced.
+
+What shipped instead (the measured lesson from 0.4.6, now enforced by
+code, push 0fe0ffc):
+
+- **bench throttle guard**: ONE tiny chat round-trip BEFORE the
+  capability probe.  /v1/models is answered by the local proxy, so
+  the old flow reported reachable+authenticated while every live chat
+  call died and the corpus then burned goals as plan failures.  The
+  guard aborts with exit 2 and names the recovery procedure.
+  Live-verified against the hot upstream: clean abort in ~3 minutes
+  (the proxy's own backoff exhausts and surfaces SERVER_ERROR),
+  BEFORE any goal runs.
+
+Rerun procedure once the quota resets (unchanged, in BUILD_STATUS
+0.4.6 section): restart the proxy, then single process
+  PYTHONPATH=. python3 -m bench --provider zai --model glm-4-plus \
+      --goals 10 --kills 2 --out bench/results
+The guard now makes that command self-protecting: it either runs the
+full corpus against a healthy upstream or refuses cleanly.
+
 ## Session: v0.4.6 - the request timeout was the real task wall (and a rate-limit lesson)
 
 Following the measured t3 TIMEOUT (goal 1, v0.4.5 partial run) to the

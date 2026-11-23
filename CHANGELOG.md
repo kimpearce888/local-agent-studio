@@ -166,6 +166,17 @@ not follow-ups.
   calibrated - never pretending an estimate is exact).  Verified
   end to end against a real local HTTP endpoint returning usage.
 
+## [0.4.7] - 2026-11-23
+
+- **bench throttle guard (live-verified).**  One tiny chat round-trip
+  runs BEFORE the capability probe: /v1/models is served by the local
+  proxy, so the probe used to report reachable+authenticated while
+  every live chat call died upstream - and the corpus then burned
+  goals as plan failures on a hot limit.  The guard aborts with exit
+  2 and the recovery procedure before any goal runs.  Verified live
+  against a 14h+ account-wide 429 window (chat + CLI functions both
+  refused): clean abort in ~3 minutes.
+
 ## [0.4.6] - 2026-11-22
 
 - **Fixed: the request timeout killed healthy real-model work.**  The
