@@ -324,7 +324,7 @@ A finished task reopens only when an upstream task is rerun, which marks every d
 | raw\_output\_ref | Pointer to the full output and transcript | Readable by a tool, never injected by default |
 | usage | Tokens, time, model and parameters | Written by the engine, not the model |
 
-Output that does not match the schema is repaired once by a short follow-up in the same session, then fails the attempt. Constraint fields are checked by comparing ids and text hashes, never by asking a model. A constraint is released only by an explicit record (HIL-3), and a downstream prompt is never the only check.
+Output that does not match the schema is repaired by a short follow-up in the same session - one round, plus a second on chains of six or more tasks - then fails the attempt. Constraint fields are checked by comparing ids and text hashes, never by asking a model. A constraint is released only by an explicit record (HIL-3), and a downstream prompt is never the only check.
 
 ### Event log
 

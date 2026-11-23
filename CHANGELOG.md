@@ -7,6 +7,20 @@ not follow-ups.
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-11-23
+
+### Changed
+
+- **Handoff repair is now budgeted by chain length** (spec 5.5, measured
+  by the v0.4.8 rerun): a bad handoff still gets one repair round on
+  short chains, plus a second on chains of six or more tasks, capped at
+  three (the planner's ceiling).  Driver: the two v0.4.8 rerun failures
+  were late-stage `HANDOFF-INVALID`s on 8- and 10-task chains where a
+  single repair round was not enough; short chains never needed a
+  second.  The base is configurable (`DriverConfig.handoff_repair_rounds`,
+  default 1) and recorded in `run.created`, so resume restores it.
+  Spec 5.5, the 5.7 failure table and the 5.8 budget table amended.
+
 ### Fixed
 
 - **The GUI run session never reported completion** (found by the

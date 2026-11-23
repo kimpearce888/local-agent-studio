@@ -131,7 +131,7 @@ Milestone gates mirror the PRD's phase gates (§18). Nothing starts before the p
 
 | Risk | Mitigation in M0 |
 | --- | --- |
-| Small models emit malformed plans/handoffs | Repair loops (3 rounds planner, 1 round handoff), lenient JSON parsing, longest-valid-prefix fallback |
+| Small models emit malformed plans/handoffs | Repair loops (3 rounds planner, 1 round handoff, 2 on chains of six or more tasks), lenient JSON parsing, longest-valid-prefix fallback |
 | Constraint erosion between tasks | H-03 SHA-256 checks + compaction pinning + tests that attack exactly this |
 | Context overflow on long chains | Budget check before every attempt + ladder + `RUN-CONTEXT-OVERFLOW` |
 | Sandbox escape via workspace | Jail with realpath checks on every operation, symlink resolution, size caps, traversal test suite |

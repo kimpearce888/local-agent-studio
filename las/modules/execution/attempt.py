@@ -18,7 +18,8 @@ from las.shared.provider_contract import (
     Adapter, ChatRequest, Message, ProviderError, SimulatedCrash, ToolCall,
 )
 from las.modules.execution.budgets import (
-    AttemptOutcome, CancelRequested, DEFAULTS, PauseRequested, StallError,
+    AttemptOutcome, CancelRequested, DEFAULTS, LONG_CHAIN_TASKS,
+    MAX_HANDOFF_REPAIR_ROUNDS, PauseRequested, StallError,
 )
 from las.modules.handoffs import EvidenceContext, extract_handoff, validate_handoff
 from las.modules.storage import canonical_json
@@ -84,8 +85,15 @@ def run_attempt(d, task: Task, attempt_no: int, temperature: float) -> AttemptOu
     assistant_texts: list[str] = []
     tool_names_called: set[str] = set()
     repaired_tool_call = False
-    repaired_handoff = False
     no_block_nudges = 0
+    # Handoff repair budget (spec 5.5): the configured rounds, plus one on
+    # a long chain, capped at MAX_HANDOFF_REPAIR_ROUNDS.  Measured (the
+    # v0.4.8 rerun): late tasks on 8-10 task chains needed the second round.
+    handoff_budget = min(
+        d.config.handoff_repair_rounds
+        + (1 if len(st.plan.tasks) >= LONG_CHAIN_TASKS else 0),
+        MAX_HANDOFF_REPAIR_ROUNDS)
+    handoff_repairs = 0
 
     def log_message(message: Message, extra_tokens: int = 0):
         entry = {"ts": _now_iso(), "role": message.role, "content": message.content,
@@ -267,12 +275,12 @@ def run_attempt(d, task: Task, attempt_no: int, temperature: float) -> AttemptOu
                     "message ending with the <handoff> JSON block."))
                 log_message(messages[-1])
                 continue
-            if repaired_handoff:
+            if handoff_repairs >= handoff_budget:
                 return AttemptOutcome(False, "HANDOFF-INVALID", "terminal",
                                       attempt_id=attempt_id, final_text=text,
                                       tokens_in=tokens_in_total,
                                       tokens_out=tokens_out_total)
-            repaired_handoff = True
+            handoff_repairs += 1
             rules = ", ".join(sorted({i.rule for i in issues}))
             messages.append(Message(
                 "user",

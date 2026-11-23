@@ -18,11 +18,20 @@ DEFAULTS = {
     "max_turns": 25,
     "max_tool_calls": 100,
     "retries": 2,
+    "handoff_repair_rounds": 1,
     "cap_tokens_run": 2_000_000,
     "cap_wall_minutes_run": 480,
     "context_length": 8192,
 }
 BACKOFF_SCHEDULE = (2.0, 8.0, 30.0)   # spec 5.7, server/network errors
+
+# Handoff repair budgeting (spec 5.5): the configured rounds plus one on a
+# long chain, capped at the planner's three-round ceiling (PLN-2).  The
+# long-chain bonus is measured, not guessed: the two v0.4.8 rerun failures
+# were late-stage HANDOFF-INVALIDs on 8- and 10-task chains where a single
+# repair round was not enough (short chains never needed a second).
+LONG_CHAIN_TASKS = 6
+MAX_HANDOFF_REPAIR_ROUNDS = 3
 
 NO_RETRY_CODES = {"RUN-CONTEXT-OVERFLOW", "MODEL-UNAVAILABLE", "CAP-REACHED",
                   "PERMISSION-DENIED", "TOOL-CALL-INVALID", "HANDOFF-INVALID"}
@@ -64,6 +73,10 @@ class DriverConfig:
     # generation, measured 300-600s per turn) needs far more than the
     # mock-speed default.
     wall_task_seconds: int = DEFAULTS["wall_task_seconds"]
+    # Handoff repair rounds per task attempt (spec 5.5): the base budget,
+    # raised by one on a chain of LONG_CHAIN_TASKS or more tasks (see the
+    # measured note above), never above MAX_HANDOFF_REPAIR_ROUNDS.
+    handoff_repair_rounds: int = DEFAULTS["handoff_repair_rounds"]
     tool_calling: bool = True              # capability: native tool calls
     enable_shell: bool = False
     enable_web: bool = False
@@ -86,6 +99,7 @@ class DriverConfig:
             "stall_timeout": self.stall_timeout,
             "context_length": self.context_length,
             "wall_task_seconds": self.wall_task_seconds,
+            "handoff_repair_rounds": self.handoff_repair_rounds,
             "enable_shell": self.enable_shell,
             "enable_web": self.enable_web,
             "command_allowlist": list(self.command_allowlist),

@@ -248,8 +248,8 @@ A task ends when the model sends a final message with no tool call. The protocol
 
 1. extracts and parses the block;
 2. validates it with the rules below;
-3. on failure sends one repair message in the same session that lists the failed rules;
-4. if it still fails, ends the attempt with `HANDOFF-INVALID`.
+3. on failure sends a repair message in the same session that lists the failed rules. The budget is one round, plus a second on chains of six or more tasks (the configured `handoff_repair_rounds` plus one on a long chain, capped at three, matching the planner's ceiling);
+4. if it still fails after the budget is spent, ends the attempt with `HANDOFF-INVALID`.
 
 | Rule | Check |
 | --- | --- |
@@ -279,7 +279,7 @@ Controls: Pause after this task stops the scheduler before step 2 of the next ta
 | --- | --- | --- | --- |
 | Server or network error | Connection error or 5xx | Retry after 2, 8 and 30 seconds, up to the task's retries | Failure panel |
 | Stall or timeout | No token for 120 seconds, or the task timeout | Abort the attempt and retry once | Failure panel |
-| Bad handoff | Rules H-01 to H-08 | One repair message | `HANDOFF-INVALID` |
+| Bad handoff | Rules H-01 to H-08 | One repair message; two on chains of six or more tasks | `HANDOFF-INVALID` |
 | Bad tool call | Arguments fail to parse or validate | One repair message | `TOOL-CALL-INVALID` |
 | Context overflow | Ladder fails, or the server rejects the size | No retry | `RUN-CONTEXT-OVERFLOW` |
 | Loop | The same tool call with the same arguments three times in a row, or four identical assistant messages | Abort the attempt; one retry with temperature raised by 0.2 | `LOOP-DETECTED` |
@@ -299,6 +299,7 @@ Failure policy options are Stop, Skip and Ask (default). Skip marks tasks that d
 | Turns per task | 25 | 1 to 200 |
 | Tool calls per task | 100 | 1 to 1,000 |
 | Retries per task | 2 | 0 to 5 |
+| Handoff repair rounds | 1 | Plus one on chains of six or more tasks; hard cap 3 |
 | Planner repair rounds | 3 | Fixed |
 | Token cap per run | 2,000,000 | 10,000 to 50,000,000; there is no unlimited setting |
 | Wall-time cap per run | 8 hours | 5 minutes to 72 hours |

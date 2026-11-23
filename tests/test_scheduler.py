@@ -151,6 +151,101 @@ class TestConstraintPreservation(SchedulerTestBase):
         self.assertIn("Never invent numbers.", system)
 
 
+class TestHandoffRepairBudget(SchedulerTestBase):
+    """Chain-length-aware handoff repair (spec 5.5): the configured
+    rounds plus one on chains of six or more tasks, capped at three.
+    Measured driver: the two v0.4.8 rerun failures were late-stage
+    HANDOFF-INVALIDs on 8- and 10-task chains where one repair round
+    was not enough."""
+
+    def long_plan(self, tasks: int = 6):
+        """A linear chain of ``tasks`` tasks (six = the long-chain
+        boundary, exactly LONG_CHAIN_TASKS)."""
+        from las.shared.plan_contract import Task
+        plan = make_plan(tasks=[])
+        plan.tasks = [
+            Task(id=f"t{i}", type="task", title=f"Step {i}",
+                 instructions=f"Do step {i} and hand off.",
+                 needs=[f"t{i-1}"] if i > 1 else [],
+                 constraints=["c1", "c2"], role="worker",
+                 tools=["write_file", "read_file"])
+            for i in range(1, tasks + 1)]
+        return plan
+
+    def invalid_turn(self, plan, task_id, label):
+        """A present-but-invalid handoff (H-03 reworded constraint), so
+        it consumes a repair round - not a missing-block nudge."""
+        reworded = constraint_objs(plan, reword={"c2": "Never fabricate numbers."})
+        return {"text": handoff_text(task_id, f"Attempt {label}.", reworded)}
+
+    def test_long_chain_second_repair_round_recovers(self):
+        plan = self.long_plan(6)          # six tasks: budget 1 + 1 = 2
+        script = [
+            self.invalid_turn(plan, "t1", "one"),   # repair round 1
+            self.invalid_turn(plan, "t1", "two"),   # repair round 2 (new)
+            success_turn(plan, "t1"),               # recovered
+        ] + [success_turn(plan, t.id) for t in plan.tasks[1:]]
+        engine, run_id, driver, results = run_with_mock(
+            plan, script, self.data_dir, DriverConfig(failure_policy="stop"))
+        state = engine.state(run_id)
+        self.assertEqual(state.status, "succeeded")
+        self.assertEqual(state.task_state("t1").state, "succeeded")
+
+    def test_long_chain_budget_is_capped_at_three(self):
+        plan = self.long_plan(6)          # config 2 + long-chain 1 -> capped at 3
+        script = [
+            self.invalid_turn(plan, "t1", "one"),
+            self.invalid_turn(plan, "t1", "two"),
+            self.invalid_turn(plan, "t1", "three"),
+            success_turn(plan, "t1"),
+        ] + [success_turn(plan, t.id) for t in plan.tasks[1:]]
+        engine, run_id, driver, results = run_with_mock(
+            plan, script, self.data_dir,
+            DriverConfig(failure_policy="stop", handoff_repair_rounds=2))
+        state = engine.state(run_id)
+        self.assertEqual(state.status, "succeeded")
+
+    def test_long_chain_fourth_invalid_handoff_fails(self):
+        plan = self.long_plan(6)          # default budget 2 on six tasks
+        script = [
+            self.invalid_turn(plan, "t1", "one"),
+            self.invalid_turn(plan, "t1", "two"),
+            self.invalid_turn(plan, "t1", "three"),  # budget spent
+        ]
+        engine, run_id, driver, results = run_with_mock(
+            plan, script, self.data_dir, DriverConfig(failure_policy="stop"))
+        state = engine.state(run_id)
+        self.assertEqual(state.status, "failed")
+        self.assertEqual(state.task_state("t1").error_code, "HANDOFF-INVALID")
+
+    def test_short_chain_stays_one_round_by_default(self):
+        plan = make_plan()                # three tasks: no long-chain bonus
+        script = [
+            self.invalid_turn(plan, "t1", "one"),
+            self.invalid_turn(plan, "t1", "two"),    # single round spent
+        ]
+        engine, run_id, driver, results = run_with_mock(
+            plan, script, self.data_dir, DriverConfig(failure_policy="stop"))
+        state = engine.state(run_id)
+        self.assertEqual(state.status, "failed")
+        self.assertEqual(state.task_state("t1").error_code, "HANDOFF-INVALID")
+
+    def test_configured_rounds_apply_without_long_chain(self):
+        plan = make_plan()                # three tasks, config 2 -> budget 2
+        script = [
+            self.invalid_turn(plan, "t1", "one"),
+            self.invalid_turn(plan, "t1", "two"),
+            success_turn(plan, "t1"),
+            success_turn(plan, "t2"),
+            success_turn(plan, "t3"),
+        ]
+        engine, run_id, driver, results = run_with_mock(
+            plan, script, self.data_dir,
+            DriverConfig(failure_policy="stop", handoff_repair_rounds=2))
+        state = engine.state(run_id)
+        self.assertEqual(state.status, "succeeded")
+
+
 class TestResume(SchedulerTestBase):
     def test_ac06_crash_mid_task_resumes_without_redoing(self):
         plan = make_plan()
@@ -505,6 +600,14 @@ class DriverConfigTests(unittest.TestCase):
 
     def test_wall_task_seconds_default(self):
         self.assertEqual(DriverConfig().wall_task_seconds, 1800)
+
+    def test_handoff_repair_rounds_recorded(self):
+        config = DriverConfig(handoff_repair_rounds=2)
+        obj = config.to_public_obj()
+        self.assertEqual(obj["handoff_repair_rounds"], 2)
+
+    def test_handoff_repair_rounds_default(self):
+        self.assertEqual(DriverConfig().handoff_repair_rounds, 1)
 
 
 if __name__ == "__main__":
